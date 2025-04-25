@@ -1,0 +1,42 @@
+//
+// SPDX-FileCopyrightText: The LineageOS Project
+// SPDX-License-Identifier: Apache-2.0
+//
+
+cc_binary {
+    name: "vendor.lineage.touch-service.lenovo",
+    enabled: select(soong_config_variable("lenovotouch", "high_touch_polling_rate"), {
+        true: true,
+        default: false,
+    }),
+    vintf_fragments: select(soong_config_variable("lenovotouch", "high_touch_polling_rate"), {
+        true: ["vendor.lineage.touch-service.lenovo.xml"],
+        default: [],
+    }),
+    vendor: true,
+    relative_install_path: "hw",
+    init_rc: ["vendor.lineage.touch-service.lenovo.rc"],
+    srcs: [
+        "HighTouchPollingRate.cpp",
+        "service.cpp",
+    ],
+    shared_libs: [
+        "libbase",
+        "libbinder_ndk",
+        "vendor.lineage.touch-V1-ndk",
+    ],
+    cflags: [
+        "-Wall",
+        "-Wextra",
+        "-Werror",
+    ] + select(soong_config_variable("lenovotouch", "high_report_rate_node"), {
+        any @ value: ["-DHIGH_REPORT_RATE_NODE=\"" + value + "\""],
+        default: [],
+    }) + select(soong_config_variable("lenovotouch", "high_report_rate_enable"), {
+        any @ value: ["-DHIGH_REPORT_RATE_ENABLE=\"" + value + "\""],
+        default: [],
+    }) + select(soong_config_variable("lenovotouch", "high_report_rate_disable"), {
+        any @ value: ["-DHIGH_REPORT_RATE_DISABLE=\"" + value + "\""],
+        default: [],
+    }),
+}
