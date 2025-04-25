@@ -1,3 +1,9 @@
+# Shared Lenovo touchscreen procfs nodes
+genfscon proc "/HighReportRate" u:object_r:vendor_proc_nvt_polling:s0
+genfscon proc "/game_edge" u:object_r:proc_tp:s0
+genfscon proc "/game_mode" u:object_r:proc_tp:s0
+genfscon proc "/report_threshold" u:object_r:proc_tp:s0
+genfscon proc "/support_pen" u:object_r:proc_tp:s0
 
 # Stock display-service uses only these two DP sysfs files.
 genfscon sysfs /devices/platform/soc/9ad2000.qcom,dp_display/prefer_mode u:object_r:vendor_sysfs_lenovo_dp:s0
