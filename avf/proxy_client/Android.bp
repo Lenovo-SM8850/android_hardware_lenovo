@@ -10,6 +10,8 @@ rust_binary {
         "src/main.rs",
     ],
     init_rc: ["vendor.qti.qtvm.proxyclient-service.rc"],
+    lints: "vendor",
+    clippy_lints: "vendor",
     rustlibs: [
         "liblogger",
         "liblog_rust",

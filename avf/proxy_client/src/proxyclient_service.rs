@@ -4,7 +4,8 @@
 */
 
 use log::{error, info};
-use rustutils::system_properties;
+// Android 17: system_properties moved to rustutils::android
+use rustutils::android::system_properties;
 use std::{
     collections::{HashMap, HashSet},
     sync::{Arc, Mutex, LazyLock},
