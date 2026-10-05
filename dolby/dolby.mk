@@ -4,6 +4,10 @@
 
 # Dolby Atmos (DAX3) settings UI and Dolby Vision helper
 
+# Dolby Atmos
+PRODUCT_PACKAGES += \
+    LunarisDolby
+
 # Dolby Vision
 PRODUCT_PACKAGES += \
     LenovoDolbyVision

@@ -1,0 +1,18 @@
+# Dolby DMS service
+
+type hal_aidl_dms_default, domain, hal_aidl_dms, hal_aidl_dms_server, halserverdomain;
+type hal_aidl_dms_default_exec, exec_type, file_type, vendor_file_type;
+type hal_aidl_dms_service, hal_service_type, protected_service, service_manager_type;
+typeattribute hal_audio_default hal_aidl_dms_client;
+typeattribute mediacodec hal_aidl_dms_client;
+
+binder_call(hal_aidl_dms_client, hal_aidl_dms_server)
+allow hal_aidl_dms_client hal_aidl_dms_service:service_manager { find };
+allow hal_aidl_dms_default vendor_data_file:dir { ioctl read write lock open watch watch_reads add_name remove_name };
+allow hal_aidl_dms_default vendor_data_file:file { ioctl read write create getattr setattr lock append map unlink rename open watch watch_reads };
+allow hal_aidl_dms_server hal_aidl_dms_client:binder { call transfer };
+allow hal_aidl_dms_server hal_aidl_dms_client:fd { use };
+allow hal_aidl_dms_server hal_aidl_dms_service:service_manager { add find };
+allow hal_aidl_dms_server servicemanager:binder { call transfer };
+allow servicemanager hal_aidl_dms_server:binder { call };
+init_daemon_domain(hal_aidl_dms_default)

@@ -51,6 +51,30 @@
         </interface>
     </hal>
     <hal format="hidl">
+        <name>android.hardware.media.c2</name>
+        <version>1.0</version>
+        <version>1.1</version>
+        <version>1.2</version>
+        <interface>
+            <name>IComponentStore</name>
+            <instance>dolby</instance>
+        </interface>
+    </hal>
+    <hal format="aidl">
+        <name>android.hardware.media.c2</name>
+        <interface>
+            <name>IComponentStore</name>
+            <instance>dolby</instance>
+        </interface>
+    </hal>
+    <hal format="aidl">
+        <name>vendor.dolby.dms</name>
+        <interface>
+            <name>IDms</name>
+            <instance>default</instance>
+        </interface>
+    </hal>
+    <hal format="hidl">
         <name>vendor.dolby.dvs</name>
         <version>1.0</version>
         <version>1.1</version>
