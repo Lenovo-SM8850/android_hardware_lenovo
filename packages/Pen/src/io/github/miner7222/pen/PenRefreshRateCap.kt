@@ -6,11 +6,14 @@ package io.github.miner7222.pen
 import android.app.ActivityManager
 import android.content.Context
 import android.database.ContentObserver
+import android.hardware.display.DisplayManager
+import android.view.Display
 import android.os.Handler
 import android.os.ServiceManager
 import android.os.UserHandle
 import android.provider.Settings
 import android.util.Log
+import org.evolution.display.RefreshRateManager
 import vendor.lineage.touch.IHighTouchPollingRate
 
 /** Like OplusPen, use Settings.System; journal exact nullable values before any write. */
@@ -19,6 +22,11 @@ internal class PenRefreshRateCap(private val context: Context, private val handl
         .getSharedPreferences("pen_refresh_restore", Context.MODE_PRIVATE)
     private val rate = context.getString(R.string.config_penSupportedRefreshRate).toFloatOrNull()
         ?.takeIf { it.isFinite() && it > 0f }
+    private val manager by lazy {
+        // EvoX's helper needs a display-associated context, unlike a plain Service context.
+        val display = context.getSystemService(DisplayManager::class.java).getDisplay(Display.DEFAULT_DISPLAY)
+        display?.let { context.createDisplayContext(it).getSystemService(RefreshRateManager::class.java) }
+    }
     private var user = -1
     private var resolver = context.contentResolver
     private var active = false
@@ -102,6 +110,27 @@ internal class PenRefreshRateCap(private val context: Context, private val handl
                         check(Settings.System.putString(resolver, key, cap.toString()))
                     }
                 }
+                // EvoX votes for extreme/per-app rates at priority 24, above PEAK (10).
+                // Its manager must update the cached policy too; changing the string alone is insufficient.
+                val extreme = Settings.System.getString(resolver, Settings.System.EXTREME_REFRESH_RATE)
+                updateSavedChoice(Settings.System.EXTREME_REFRESH_RATE, extreme)
+                if (extreme == "1" && manager != null &&
+                    save(Settings.System.EXTREME_REFRESH_RATE, extreme, "0")) {
+                    manager?.setExtremeRefreshRateEnabled(false)
+                }
+                val config = Settings.System.getString(resolver, Settings.System.REFRESH_RATE_CONFIG_CUSTOM)
+                val entries = parseConfig(config)
+                for ((pkg, value) in entries) {
+                    val key = "app:$pkg"
+                    updateSavedChoice(key, value.toString())
+                    if (value > cap && manager != null && save(key, value.toString(), cap.toInt().toString())) {
+                        manager?.setRefreshRateForPackage(pkg, cap.toInt())
+                    }
+                }
+                // Removing a custom app entry is a user choice, not a reason to resurrect it.
+                for (key in savedKeys().filter { it.startsWith("app:") }) {
+                    if (!entries.containsKey(key.removePrefix("app:"))) drop(key)
+                }
             }
             // Keep high polling disabled while the pen session remains ready.
             if (pollingActive) {
@@ -147,6 +176,7 @@ internal class PenRefreshRateCap(private val context: Context, private val handl
 
     private fun restore(savedUser: Int, refreshOnly: Boolean = false) {
         val cr = context.createContextAsUser(UserHandle.of(savedUser), 0).contentResolver
+        val currentUser = ActivityManager.getCurrentUser() == savedUser
         for (key in savedKeys().filter { !refreshOnly || it != "polling" }) {
             try {
                 val original = journal.getString("original:$key", null)
@@ -155,7 +185,22 @@ internal class PenRefreshRateCap(private val context: Context, private val handl
                     val polling = pollingService() ?: error("High touch polling service unavailable")
                     val raw = if (polling.enabled) "1" else "0"
                     if (raw == applied) polling.enabled = original == "1"
+                } else if (key.startsWith("app:")) {
+                    val pkg = key.removePrefix("app:")
+                    val config = parseConfig(Settings.System.getString(cr, Settings.System.REFRESH_RATE_CONFIG_CUSTOM))
+                    if (config[pkg]?.toString() == applied && original != null) {
+                        if (currentUser && manager != null) {
+                            manager?.setRefreshRateForPackage(pkg, original.toInt())
+                        } else {
+                            config[pkg] = original.toInt()
+                            check(Settings.System.putString(cr, Settings.System.REFRESH_RATE_CONFIG_CUSTOM,
+                                config.entries.joinToString(";") { "${it.key},${it.value}" } + ";"))
+                        }
+                    }
                 } else if (Settings.System.getString(cr, key) == applied) {
+                    if (key == Settings.System.EXTREME_REFRESH_RATE && currentUser && manager != null) {
+                        manager?.setExtremeRefreshRateEnabled(original == "1")
+                    }
                     check(Settings.System.putString(cr, key, original))
                 }
                 drop(key)
@@ -167,8 +212,18 @@ internal class PenRefreshRateCap(private val context: Context, private val handl
         if (savedKeys().isEmpty()) journal.edit().clear().commit()
     }
 
+    private fun parseConfig(raw: String?): LinkedHashMap<String, Int> {
+        val entries = linkedMapOf<String, Int>()
+        raw?.split(';')?.forEach {
+            val fields = it.split(',')
+            if (fields.size == 2) fields[1].toIntOrNull()?.let { rate -> entries[fields[0]] = rate }
+        }
+        return entries
+    }
+
     companion object {
         private const val TAG = "LenovoPenRefreshRate"
-        private val KEYS = listOf(Settings.System.PEAK_REFRESH_RATE, Settings.System.MIN_REFRESH_RATE)
+        private val KEYS = listOf(Settings.System.PEAK_REFRESH_RATE, Settings.System.MIN_REFRESH_RATE,
+            Settings.System.EXTREME_REFRESH_RATE, Settings.System.REFRESH_RATE_CONFIG_CUSTOM)
     }
 }
