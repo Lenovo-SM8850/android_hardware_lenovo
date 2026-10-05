@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+     SPDX-License-Identifier: Apache-2.0
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <!-- Redrawn double-D silhouette: white fill, transparent background, 2dp side padding. -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M2,5 L4.2,5 A7,7 0,0 1,4.2,19 L2,19 Z M22,5 L19.8,5 A7,7 0,0 0,19.8,19 L22,19 Z" />
+</vector>

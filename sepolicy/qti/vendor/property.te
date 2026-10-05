@@ -1,4 +1,5 @@
-# Shared Lenovo HAL properties
+# Shared Lenovo HAL and Dolby properties
+vendor_internal_prop(vendor_dolbyv_prop)
 vendor_internal_prop(vendor_lenovo_game_mode_prop)
 vendor_public_prop(vendor_hw_ai_prop)
 vendor_public_prop(vendor_lenovotb_init_prop)
