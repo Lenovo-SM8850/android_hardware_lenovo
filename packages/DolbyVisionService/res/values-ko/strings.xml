@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+     SPDX-License-Identifier: Apache-2.0
+-->
+<resources>
+    <string name="app_name">Dolby Vision 서비스</string>
+    <string name="notification_channel">Dolby</string>
+    <string name="notification_title">Dolby Vision 모드 선택</string>
+    <string name="notification_bright_mode">Dolby Vision 밝음</string>
+    <string name="notification_vivid_mode">Dolby Vision 선명함</string>
+    <string name="notification_dark_mode">Dolby Vision 어두움</string>
+    <string name="content_text_bright">밝은 환경에 최적화됨</string>
+    <string name="content_text_vivid">밝기와 색상을 강화하여 선명한 영상에 맞게 최적화됨</string>
+    <string name="content_text_dark">어두운 환경에서의 영화 시청에 최적화됨</string>
+    <string name="notification_bright">밝음</string>
+    <string name="notification_vivid">선명함</string>
+    <string name="notification_dark">어두움</string>
+</resources>
