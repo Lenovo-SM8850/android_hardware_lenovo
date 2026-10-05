@@ -1,0 +1,31 @@
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
+<resources>
+    <string name="app_name">Legion Halo</string>
+    <string name="settings_summary">Legion Halo colors and effects</string>
+    <string name="enabled">Use Legion Halo</string>
+    <string name="availability">Effects appear while the screen is on and Battery Saver is off. Notifications and battery lights take priority.</string>
+    <string name="effect">Effect</string>
+    <string name="static_colour">Static colour</string>
+    <string name="breathing">Breathing</string>
+    <string name="rainbow">Rainbow rotation</string>
+    <string name="colour_cycle">Colour cycle</string>
+    <string name="colours">Colours</string>
+    <string name="colours_help">Select a color code.</string>
+    <string name="invalid_colours">Enter a six-digit RGB hex code.</string>
+    <string name="speed">Speed</string>
+    <string name="slow">Slow</string>
+    <string name="normal">Normal</string>
+    <string name="fast">Fast</string>
+    <string name="fixed_speed">Rainbow rotation uses a fixed speed.</string>
+    <string name="brightness">Brightness</string>
+    <string name="paused">Paused</string>
+    <string name="service_unavailable">Light service unavailable. Retrying…</string>
+    <string name="colour_number">Color %1$d</string>
+    <string name="reorder_colour">Reorder %1$s</string>
+    <string name="move_up">Move up</string>
+    <string name="move_down">Move down</string>
+    <string name="hue">Hue</string>
+    <string name="colour_code">Color code</string>
+    <string name="saturation_value">Saturation %1$d%%, value %2$d%%</string>
+</resources>
