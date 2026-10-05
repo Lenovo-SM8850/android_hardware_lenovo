@@ -1,0 +1,14 @@
+#
+# SPDX-License-Identifier: Apache-2.0
+#
+
+service vendor.lenovo-cover /vendor/bin/lenovo-cover
+    class late_start
+    user system
+    group system uhid
+    restart_period 30
+    disabled
+
+# Subscribe after boot completes so a boot-time closed lid sleeps.
+on property:sys.boot_completed=1
+    start vendor.lenovo-cover
