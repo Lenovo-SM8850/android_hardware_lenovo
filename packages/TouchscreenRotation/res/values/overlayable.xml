@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<resources>
+    <overlayable name="TouchscreenRotationConfig">
+        <policy type="vendor|product|signature">
+            <item type="string" name="config_rotationNode" />
+            <item type="string" name="config_edgeGridNode" />
+            <item type="string" name="config_edgeGridValue" />
+            <item type="bool" name="config_supportsEdgeGrid" />
+        </policy>
+    </overlayable>
+</resources>
