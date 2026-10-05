@@ -7,4 +7,9 @@
         <version>2</version>
         <fqname>ILights/default</fqname>
     </hal>
+    <hal format="aidl">
+        <name>vendor.lenovo.hardware.lightring</name>
+        <version>1</version>
+        <fqname>ILightRing/default</fqname>
+    </hal>
 </manifest>
