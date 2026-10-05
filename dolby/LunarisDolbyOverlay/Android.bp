@@ -1,0 +1,7 @@
+// SPDX-License-Identifier: Apache-2.0
+
+// Dolby profiles
+runtime_resource_overlay {
+    name: "LunarisDolbyOverlay",
+    product_specific: true,
+}
