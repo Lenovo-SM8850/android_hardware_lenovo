@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<resources>
+    <string name="app_name">Video motion smoothing</string>
+    <string name="settings_summary">Smooth video playback in selected apps</string>
+    <string name="enabled">Use video motion smoothing</string>
+    <string name="availability">Adds extra frames to supported videos in the selected apps for smoother motion. Restart playback after changing a setting. Copy-protected videos, HDR videos and some TV-style streaming playback are not supported.</string>
+    <string name="user_limit">Available only to the admin user.</string>
+    <string name="shared_uid">Apps that share a UID also share this setting.</string>
+    <string name="search_apps">Search apps</string>
+    <string name="no_apps">No matching apps</string>
+</resources>
