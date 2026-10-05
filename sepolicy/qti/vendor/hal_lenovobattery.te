@@ -1,0 +1,44 @@
+# Lenovo battery HAL
+
+type hal_lenovobattery_default, domain, hal_lenovobattery, hal_lenovobattery_server, halserverdomain, lgsi_hwserver_domain;
+type hal_lenovobattery_default_exec, exec_type, file_type, vendor_file_type;
+type hal_lenovobattery_hwservice, hwservice_manager_type, protected_hwservice, service_manager_type;
+type hal_lenovobattery_service, hal_service_type, protected_service, service_manager_type;
+
+# Stock ReadFileToString/WriteStringToFile control attributes only.
+allow hal_lenovobattery_default { vendor_sysfs_lenovo_battery_control vendor_sysfs_lenovo_charging_control }:file { getattr open read write };
+
+binder_call(dumpstate, hal_lenovobattery_default)
+allow hal_lenovobattery_client hal_lenovobattery_hwservice:hwservice_manager { find };
+binder_call(hal_lenovobattery_client, hal_lenovobattery_server)
+allow hal_lenovobattery_client hal_lenovobattery_service:service_manager { find };
+binder_call(hal_lenovobattery_client, servicemanager)
+allow hal_lenovobattery_default dumpstate:binder { transfer };
+allow hal_lenovobattery_default sysfs_batteryinfo:dir { getattr open read search };
+allow hal_lenovobattery_default sysfs_batteryinfo:file { getattr open read };
+allow hal_lenovobattery_default sysfs_batteryinfo:lnk_file { getattr open read };
+allow hal_lenovobattery_default sysfs_power:dir { getattr open read search };
+allow hal_lenovobattery_default sysfs_power:file { getattr open read };
+allow hal_lenovobattery_default sysfs_power:lnk_file { getattr open read };
+allow hal_lenovobattery_default vendor_sysfs_battery_supply:dir { getattr open read search };
+allow hal_lenovobattery_default vendor_sysfs_battery_supply:file { getattr open read };
+allow hal_lenovobattery_default vendor_sysfs_battery_supply:lnk_file { getattr open read };
+allow hal_lenovobattery_default vendor_sysfs_usb_supply:dir { getattr open read search };
+allow hal_lenovobattery_default vendor_sysfs_usb_supply:file { getattr open read };
+allow hal_lenovobattery_default vendor_sysfs_usb_supply:lnk_file { getattr open read };
+allow hal_lenovobattery_server hal_lenovobattery_client:binder { call transfer };
+allow hal_lenovobattery_server hal_lenovobattery_client:fd { use };
+allow hal_lenovobattery_server hal_lenovobattery_hwservice:hwservice_manager { add find };
+allow hal_lenovobattery_server hal_lenovobattery_service:service_manager { add find };
+allow hal_lenovobattery_server hidl_base_hwservice:hwservice_manager { add };
+allow hal_lenovobattery_server servicemanager:binder { call transfer };
+allow hal_lenovobattery_server servicemanager:fd { use };
+allow servicemanager hal_lenovobattery_client:binder { transfer };
+init_daemon_domain(hal_lenovobattery_default)
+
+dontaudit hal_lenovobattery_default persist_debug_prop:file { getattr map open read };
+
+# Lineage charging control shares the charging_enabled node.
+allow hal_lineage_health_default vendor_sysfs_lenovo_charging_control:file { getattr open read write };
+# The source Health HAL reads activation dates from the battery supply.
+allow hal_health_default vendor_sysfs_lenovo_battery_control:file { getattr open read };
