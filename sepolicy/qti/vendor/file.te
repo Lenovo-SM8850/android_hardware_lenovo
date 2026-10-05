@@ -1,4 +1,5 @@
 
 # Stock Lenovo battery setters and DP mode/hotplug controls.
 type vendor_sysfs_lenovo_battery_control, fs_type, sysfs_type;
+type vendor_sysfs_lenovo_dp, fs_type, sysfs_type;
 type vendor_sysfs_lenovo_charging_control, fs_type, sysfs_type;
