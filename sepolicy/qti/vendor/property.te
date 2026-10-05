@@ -1,0 +1,5 @@
+vendor_public_prop(vendor_hw_ai_prop)
+vendor_public_prop(vendor_lenovotb_init_prop)
+typeattribute vendor_lenovotb_init_prop lgsi_core_property_type;
+vendor_public_prop(vendor_lgsi_battery_prop)
+typeattribute vendor_lgsi_battery_prop lgsi_core_property_type;

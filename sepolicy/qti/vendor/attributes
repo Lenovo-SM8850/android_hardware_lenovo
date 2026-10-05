@@ -1,0 +1,9 @@
+# Shared Lenovo HAL attributes
+
+
+
+# LGSI
+attribute lgsi_core_property_type;
+attribute lgsi_hwserver;
+attribute lgsi_hwserver_domain;
+attribute vendor_service;
