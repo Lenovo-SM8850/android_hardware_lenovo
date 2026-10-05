@@ -1,0 +1,27 @@
+// SPDX-License-Identifier: Apache-2.0
+
+aidl_interface {
+    name: "vendor.dolby.dvs",
+    owner: "lenovo",
+    vendor_available: true,
+    srcs: ["vendor/dolby/dvs/*.aidl"],
+    stability: "vintf",
+    backend: {
+        cpp: {
+            enabled: false,
+        },
+        ndk: {
+            enabled: false,
+        },
+        java: {
+            sdk_version: "module_current",
+        },
+    },
+    frozen: true,
+    versions_with_info: [
+        {
+            version: "1",
+            imports: [],
+        },
+    ],
+}
