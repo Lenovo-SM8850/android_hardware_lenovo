@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    SPDX-License-Identifier: Apache-2.0
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="io.github.miner7222.touchrotation"
+    android:sharedUserId="android.uid.system">
+    <application
+        android:name=".TouchscreenRotationApplication"
+        android:label="Touchscreen rotation"
+        android:persistent="true"
+        android:directBootAware="true"
+        android:defaultToDeviceProtectedStorage="true"
+        android:hasCode="true" />
+</manifest>
