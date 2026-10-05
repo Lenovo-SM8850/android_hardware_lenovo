@@ -1,0 +1,18 @@
+// SPDX-License-Identifier: Apache-2.0
+android_app {
+    name: "VideoMotion",
+    srcs: ["src/**/*.kt"],
+    resource_dirs: ["res"],
+    certificate: "platform",
+    platform_apis: true,
+    system_ext_specific: true,
+    privileged: true,
+    static_libs: [
+        "androidx.preference_preference",
+        "SettingsLib",
+        "SettingsLibSearchBoxPreference",
+    ],
+    optimize: {
+        enabled: false,
+    },
+}
