@@ -1,0 +1,25 @@
+// SPDX-License-Identifier: Apache-2.0
+
+cc_library_shared {
+    name: "libwfdaac.lenovo",
+    vendor: true,
+    enabled: select(soong_config_variable("lenovo_audio", "source_wfd_aac"), {
+        true: true,
+        default: false,
+    }),
+    srcs: [
+        "aacEncode.cpp",
+        "aacDecode.cpp",
+    ],
+    include_dirs: [
+        "external/aac/cpp/libAACenc/include",
+        "external/aac/cpp/libAACdec/include",
+        "external/aac/cpp/libSYS/include",
+    ],
+    shared_libs: ["liblog"],
+    static_libs: ["libFraunhoferAAC"],
+    cflags: ["-Werror"],
+    sanitize: {
+        integer_overflow: true,
+    },
+}
