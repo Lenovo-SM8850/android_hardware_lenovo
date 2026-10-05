@@ -1,2 +1,10 @@
+# Lenovo HALs
+/(vendor|system/vendor)/bin/hw/vendor\.lenovo\.hardware\.ufs-service            u:object_r:hal_lenovoufs_default_exec:s0
+/(vendor|system/vendor)/bin/hw/vendor\.lenovo\.hardware\.led-service            u:object_r:hal_lenovoled_default_exec:s0
+/(vendor|system/vendor)/bin/hw/vendor\.lenovo\.hardware\.battery-service        u:object_r:hal_lenovobattery_default_exec:s0
+/(vendor|system/vendor)/bin/hw/vendor\.lenovo\.hardware\.display-service        u:object_r:hal_lenovodisplay_default_exec:s0
+/(vendor|system/vendor)/bin/hw/vendor\.lenovo\.hardware\.touchscreen-service    u:object_r:hal_lenovotouchscreen_default_exec:s0
+/vendor/bin/hw/vendor\.lenovo\.hardware\.vibrator_dual-service                  u:object_r:hal_vibrator_default_exec:s0
+
 /vendor/bin/hw/vendor\.lineage\.touch-service\.lenovo    u:object_r:hal_lineage_touch_default_exec:s0
 /(vendor|system/vendor)/bin/hw/android\.hardware\.light-service\.lenovo       u:object_r:hal_light_default_exec:s0
