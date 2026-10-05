@@ -11,3 +11,7 @@ PRODUCT_PACKAGES += \
 # Dolby Vision
 PRODUCT_PACKAGES += \
     LenovoDolbyVision
+
+# Dolby profiles
+PRODUCT_PACKAGES += \
+    LunarisDolbyOverlay
