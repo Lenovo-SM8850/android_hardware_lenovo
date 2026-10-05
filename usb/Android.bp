@@ -1,0 +1,31 @@
+//
+// SPDX-License-Identifier: Apache-2.0
+//
+cc_defaults {
+    name: "lenovo_usb_hal_defaults",
+    cflags: [
+        "-Werror",
+    ],
+    vendor: true,
+    relative_install_path: "hw",
+}
+
+cc_binary {
+    name: "android.hardware.usb-service.lenovo",
+    overrides: ["android.hardware.usb-service.qti"],
+    defaults: ["lenovo_usb_hal_defaults"],
+    shared_libs: [
+        "android.hardware.usb-V3-ndk",
+        "libbase",
+        "libbinder_ndk",
+        "libcutils",
+        "liblog",
+        "libutils",
+    ],
+    srcs: [
+        "Usb.cpp",
+    ],
+
+    init_rc: ["android.hardware.usb-service.lenovo.rc"],
+    vintf_fragments: ["android.hardware.usb-service.lenovo.xml"],
+}
