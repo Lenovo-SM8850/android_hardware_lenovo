@@ -1,0 +1,63 @@
+//
+// SPDX-FileCopyrightText: 2026 The LineageOS Project
+// SPDX-License-Identifier: Apache-2.0
+//
+
+soong_config_module_type {
+    name: "lenovo_touch_defaults",
+    module_type: "cc_defaults",
+    config_namespace: "lenovotouch",
+    bool_variables: ["high_touch_polling_rate"],
+    value_variables: [
+        "high_report_rate_node",
+        "high_report_rate_enable",
+        "high_report_rate_disable",
+    ],
+    properties: [
+        "enabled",
+        "cflags",
+        "vintf_fragments",
+    ],
+}
+
+lenovo_touch_defaults {
+    name: "lenovo_touch_capabilities",
+    enabled: false,
+    soong_config_variables: {
+        high_touch_polling_rate: {
+            enabled: true,
+            vintf_fragments: ["vendor.lineage.touch-service.lenovo.xml"],
+        },
+        high_report_rate_node: {
+            cflags: ["-DHIGH_REPORT_RATE_NODE=\"%s\""],
+        },
+        high_report_rate_enable: {
+            cflags: ["-DHIGH_REPORT_RATE_ENABLE=\"%s\""],
+        },
+        high_report_rate_disable: {
+            cflags: ["-DHIGH_REPORT_RATE_DISABLE=\"%s\""],
+        },
+    },
+}
+
+cc_binary {
+    name: "vendor.lineage.touch-service.lenovo",
+    defaults: ["lenovo_touch_capabilities"],
+    vendor: true,
+    relative_install_path: "hw",
+    init_rc: ["vendor.lineage.touch-service.lenovo.rc"],
+    srcs: [
+        "HighTouchPollingRate.cpp",
+        "service.cpp",
+    ],
+    shared_libs: [
+        "libbase",
+        "libbinder_ndk",
+        "vendor.lineage.touch-V1-ndk",
+    ],
+    cflags: [
+        "-Wall",
+        "-Wextra",
+        "-Werror",
+    ],
+}

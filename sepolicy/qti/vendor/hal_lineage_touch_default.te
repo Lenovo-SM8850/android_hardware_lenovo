@@ -1,0 +1,2 @@
+# Domain, transition and AIDL service label come from device/lineage/sepolicy.
+allow hal_lineage_touch_default vendor_proc_nvt_polling:file rw_file_perms;

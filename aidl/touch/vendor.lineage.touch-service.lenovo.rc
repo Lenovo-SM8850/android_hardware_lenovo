@@ -1,0 +1,14 @@
+#
+# SPDX-FileCopyrightText: 2026 The LineageOS Project
+# SPDX-License-Identifier: Apache-2.0
+#
+
+on post-fs-data
+    chown system system /proc/HighReportRate
+    chmod 0644 /proc/HighReportRate
+
+service vendor.touch-hal /vendor/bin/hw/vendor.lineage.touch-service.lenovo
+    class hal
+    user system
+    group system
+    interface aidl vendor.lineage.touch.IHighTouchPollingRate/default
