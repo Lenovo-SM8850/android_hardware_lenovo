@@ -1,0 +1,8 @@
+// SPDX-License-Identifier: Apache-2.0
+
+prebuilt_etc {
+    name: "init.lenovo.touch.rc",
+    src: "init.lenovo.touch.rc",
+    sub_dir: "init",
+    vendor: true,
+}
