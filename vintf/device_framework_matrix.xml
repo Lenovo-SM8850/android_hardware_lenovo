@@ -3,6 +3,14 @@
 -->
 <compatibility-matrix version="9.0" type="framework">
     <hal format="aidl" optional="true">
+        <name>vendor.dolby.dvs</name>
+        <version>1</version>
+        <interface>
+            <name>IDvs</name>
+            <instance>default</instance>
+        </interface>
+    </hal>
+    <hal format="aidl" optional="true">
         <name>vendor.lenovo.hardware.battery</name>
         <version>1-5</version>
         <interface>
@@ -40,6 +48,32 @@
         <interface>
             <name>IUfs</name>
             <instance>default</instance>
+        </interface>
+    </hal>
+    <hal format="hidl">
+        <name>android.hardware.media.c2</name>
+        <version>1.0</version>
+        <version>1.1</version>
+        <version>1.2</version>
+        <interface>
+            <name>IComponentStore</name>
+            <instance>dolby</instance>
+        </interface>
+    </hal>
+    <hal format="aidl">
+        <name>android.hardware.media.c2</name>
+        <interface>
+            <name>IComponentStore</name>
+            <instance>dolby</instance>
+        </interface>
+    </hal>
+    <hal format="hidl">
+        <name>vendor.dolby.dvs</name>
+        <version>1.0</version>
+        <version>1.1</version>
+        <interface>
+            <name>IDvs</name>
+            <instance>dvs-hal-service</instance>
         </interface>
     </hal>
     <hal format="aidl">

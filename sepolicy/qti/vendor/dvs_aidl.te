@@ -1,0 +1,23 @@
+# Dolby Vision service
+
+type dvs_aidl_default, domain, dvs_aidl, dvs_aidl_server, halserverdomain;
+type dvs_aidl_default_exec, exec_type, file_type, vendor_file_type;
+type dvs_aidl_service, hal_service_type, protected_service, service_manager_type;
+typeattribute system_app dvs_aidl_client;
+typeattribute platform_app dvs_aidl_client;
+
+binder_call(dvs_aidl_client, dvs_aidl_server)
+allow dvs_aidl_client dvs_aidl_service:service_manager { find };
+allow dvs_aidl_default dvs_aidl_service:service_manager { add find };
+allow dvs_aidl_default fwk_sensor_hwservice:hwservice_manager { find };
+allow dvs_aidl_default fwk_sensor_service:service_manager { find };
+allow dvs_aidl_default servicemanager:binder { call transfer };
+allow dvs_aidl_default system_server:binder { transfer };
+allow dvs_aidl_default vendor_sysfs_graphics:dir { read open search };
+allow dvs_aidl_default vendor_sysfs_graphics:file { read getattr open };
+allow dvs_aidl_server dvs_aidl_client:binder { call transfer };
+allow dvs_aidl_server dvs_aidl_client:fd { use };
+set_prop(dvs_aidl_server, vendor_dolbyv_prop)
+allow servicemanager dvs_aidl_default:binder { call };
+allow system_server dvs_aidl_default:binder { call transfer };
+init_daemon_domain(dvs_aidl_default)
