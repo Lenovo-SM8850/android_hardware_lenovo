@@ -1,0 +1,17 @@
+// SPDX-License-Identifier: Apache-2.0
+
+android_app {
+    name: "LenovoLegionHalo",
+    srcs: ["src/**/*.kt"],
+    resource_dirs: ["res"],
+    certificate: "platform",
+    platform_apis: true,
+    system_ext_specific: true,
+    privileged: true,
+    static_libs: [
+        "vendor.lenovo.hardware.lightring-V1-java",
+        "androidx.preference_preference",
+        "SettingsLib",
+    ],
+    optimize: { enabled: false },
+}
