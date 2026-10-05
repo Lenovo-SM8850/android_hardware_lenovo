@@ -1,5 +1,6 @@
 service vendor.qtvm.proxyclient-service /vendor/bin/vendor.qti.qtvm.proxyclient-service
-    class early_hal
+    class hal
     user system
     group system
     oneshot
+    disabled
