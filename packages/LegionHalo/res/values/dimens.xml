@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<resources>
+    <dimen name="colour_picker_wheel_size">240dp</dimen>
+    <dimen name="colour_picker_wheel_inset">14dp</dimen>
+    <dimen name="colour_picker_selector_radius">10dp</dimen>
+    <dimen name="colour_picker_selector_ring">3dp</dimen>
+    <dimen name="colour_picker_selector_outline">1dp</dimen>
+    <dimen name="colour_picker_slider_height">48dp</dimen>
+    <dimen name="colour_picker_track_height">8dp</dimen>
+    <dimen name="colour_picker_track_radius">4dp</dimen>
+    <dimen name="colour_picker_thumb_size">20dp</dimen>
+    <dimen name="colour_picker_thumb_stroke">2dp</dimen>
+    <dimen name="colour_swatch_size">24dp</dimen>
+    <dimen name="colour_swatch_stroke">1dp</dimen>
+</resources>
