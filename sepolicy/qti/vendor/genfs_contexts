@@ -2,6 +2,7 @@
 genfscon proc "/HighReportRate" u:object_r:vendor_proc_nvt_polling:s0
 genfscon proc "/game_edge" u:object_r:proc_tp:s0
 genfscon proc "/game_mode" u:object_r:proc_tp:s0
+genfscon proc "/gesture_mode" u:object_r:vendor_proc_nvt_gesture:s0
 genfscon proc "/report_threshold" u:object_r:proc_tp:s0
 genfscon proc "/support_pen" u:object_r:proc_tp:s0
 
