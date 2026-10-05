@@ -67,6 +67,13 @@
             <instance>dolby</instance>
         </interface>
     </hal>
+    <hal format="aidl">
+        <name>vendor.dolby.dms</name>
+        <interface>
+            <name>IDms</name>
+            <instance>default</instance>
+        </interface>
+    </hal>
     <hal format="hidl">
         <name>vendor.dolby.dvs</name>
         <version>1.0</version>
