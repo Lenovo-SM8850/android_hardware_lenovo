@@ -12,6 +12,11 @@ attribute hal_lenovodisplay;
 attribute hal_lenovodisplay_client;
 attribute hal_lenovodisplay_server;
 
+# hal_lenovoled
+attribute hal_lenovoled;
+attribute hal_lenovoled_client;
+attribute hal_lenovoled_server;
+
 # LGSI
 attribute lgsi_core_property_type;
 attribute lgsi_hwserver;
