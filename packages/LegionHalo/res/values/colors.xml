@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<resources>
+    <!-- The picker draws on every hue, so its selector and slider ends stay black and white in
+         both themes to keep contrast. -->
+    <color name="colour_picker_dark">@android:color/black</color>
+    <color name="colour_picker_light">@android:color/white</color>
+</resources>

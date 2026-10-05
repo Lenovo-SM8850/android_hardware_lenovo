@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<!-- The slider starts on the right in right-to-left layouts, so the gradient starts there too. -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <gradient
+        android:angle="180"
+        android:startColor="@color/colour_picker_dark"
+        android:endColor="@color/colour_picker_light" />
+    <corners android:radius="@dimen/colour_picker_track_radius" />
+    <size android:height="@dimen/colour_picker_track_height" />
+</shape>

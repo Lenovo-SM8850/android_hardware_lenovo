@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:paddingTop="@dimen/settingslib_expressive_space_extrasmall4"
+        android:paddingStart="?attr/dialogPreferredPadding"
+        android:paddingEnd="?attr/dialogPreferredPadding">
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/colours_help" />
+
+        <io.github.miner7222.halo.ColourWheelView
+            android:id="@+id/colour_wheel"
+            android:layout_width="match_parent"
+            android:layout_height="@dimen/colour_picker_wheel_size"
+            android:layout_marginTop="@dimen/settingslib_expressive_space_small1" />
+
+        <SeekBar
+            android:id="@+id/colour_brightness"
+            android:layout_width="match_parent"
+            android:layout_height="@dimen/colour_picker_slider_height"
+            android:max="100"
+            android:splitTrack="false"
+            android:progressDrawable="@drawable/colour_brightness_track"
+            android:thumb="@drawable/colour_brightness_thumb"
+            android:contentDescription="@string/brightness" />
+
+        <EditText
+            android:id="@+id/colour_code"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:inputType="text|textNoSuggestions"
+            android:singleLine="true"
+            android:textDirection="ltr"
+            android:hint="@string/colour_code_hint"
+            android:contentDescription="@string/colour_code" />
+    </LinearLayout>
+</ScrollView>

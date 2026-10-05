@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="oval">
+    <size
+        android:width="@dimen/colour_picker_thumb_size"
+        android:height="@dimen/colour_picker_thumb_size" />
+    <solid android:color="@color/colour_picker_light" />
+    <stroke
+        android:width="@dimen/colour_picker_thumb_stroke"
+        android:color="@color/colour_picker_dark" />
+</shape>
