@@ -2,3 +2,6 @@
 # SPDX-License-Identifier: Apache-2.0
 #
 
+on post-fs-data
+    chown system system /proc/gesture_mode
+    chmod 0660 /proc/gesture_mode
