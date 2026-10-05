@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<resources>
+    <overlayable name="PlaybackColorModeConfig">
+        <policy type="vendor|product|signature">
+            <item type="integer" name="config_playbackColorMode" />
+        </policy>
+    </overlayable>
+</resources>
