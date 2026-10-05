@@ -1,0 +1,31 @@
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
+<resources>
+    <string name="app_name">Legion Halo</string>
+    <string name="settings_summary">Цвета и эффекты Legion Halo</string>
+    <string name="enabled">Использовать Legion Halo</string>
+    <string name="availability">Эффекты отображаются, когда экран включён, а режим энергосбережения выключен. Индикация уведомлений и заряда батареи имеет приоритет.</string>
+    <string name="effect">Эффект</string>
+    <string name="static_colour">Постоянный цвет</string>
+    <string name="breathing">Пульсация</string>
+    <string name="rainbow">Вращение радуги</string>
+    <string name="colour_cycle">Циклическая смена цветов</string>
+    <string name="colours">Цвета</string>
+    <string name="colours_help">Выберите код цвета.</string>
+    <string name="invalid_colours">Введите шестизначный шестнадцатеричный код цвета RGB.</string>
+    <string name="speed">Скорость</string>
+    <string name="slow">Низкая</string>
+    <string name="normal">Обычная</string>
+    <string name="fast">Высокая</string>
+    <string name="fixed_speed">Вращение радуги работает с фиксированной скоростью.</string>
+    <string name="brightness">Яркость</string>
+    <string name="paused">Приостановлено</string>
+    <string name="service_unavailable">Служба подсветки недоступна. Повторная попытка…</string>
+    <string name="colour_number">Цвет %1$d</string>
+    <string name="reorder_colour">Изменить порядок: %1$s</string>
+    <string name="move_up">Переместить вверх</string>
+    <string name="move_down">Переместить вниз</string>
+    <string name="hue">Цветовой тон</string>
+    <string name="colour_code">Код цвета</string>
+    <string name="saturation_value">Насыщенность %1$d%%, яркость %2$d%%</string>
+</resources>

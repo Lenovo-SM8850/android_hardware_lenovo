@@ -1,0 +1,31 @@
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
+<resources>
+    <string name="app_name">Legion Halo</string>
+    <string name="settings_summary">Legion Halo 색상 및 효과</string>
+    <string name="enabled">Legion Halo 사용</string>
+    <string name="availability">화면이 켜져 있고 절전 모드가 꺼져 있을 때 효과가 표시됩니다. 알림 및 배터리 표시등이 우선합니다.</string>
+    <string name="effect">효과</string>
+    <string name="static_colour">단색</string>
+    <string name="breathing">숨쉬기</string>
+    <string name="rainbow">무지개 회전</string>
+    <string name="colour_cycle">색상 순환</string>
+    <string name="colours">색상</string>
+    <string name="colours_help">색상 코드를 선택하세요.</string>
+    <string name="invalid_colours">6자리 RGB 색상 코드를 입력하세요.</string>
+    <string name="speed">속도</string>
+    <string name="slow">느리게</string>
+    <string name="normal">보통</string>
+    <string name="fast">빠르게</string>
+    <string name="fixed_speed">무지개 회전 속도는 고정되어 있습니다.</string>
+    <string name="brightness">밝기</string>
+    <string name="paused">일시중지됨</string>
+    <string name="service_unavailable">조명 서비스에 연결할 수 없습니다. 다시 시도하는 중…</string>
+    <string name="colour_number">색상 %1$d</string>
+    <string name="reorder_colour">%1$s 순서 변경</string>
+    <string name="move_up">위로 이동</string>
+    <string name="move_down">아래로 이동</string>
+    <string name="hue">색조</string>
+    <string name="colour_code">색상 코드</string>
+    <string name="saturation_value">채도 %1$d%%, 명도 %2$d%%</string>
+</resources>

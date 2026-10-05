@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+     SPDX-License-Identifier: Apache-2.0
+-->
+<resources>
+    <string name="app_name">Lenovo ペン</string>
+    <string name="pen_notification_channel">ペンの状態</string>
+    <string name="pen_detected">Lenovo ペンを検出しました</string>
+    <string name="pen_battery_level">バッテリー: %1$d%%</string>
+    <string name="pen_battery_unknown">バッテリー残量を取得できません</string>
+    <string name="pen_pair_action">ペア設定する</string>
+    <string name="pen_pairing">ペア設定中…</string>
+    <string name="pen_paired">ペア設定済み</string>
+    <string name="pen_pair_failed">ペンをペア設定できませんでした。ペンを画面に近づけて、もう一度お試しください。</string>
+    <string name="pen_bluetooth_off">ペンをペア設定するには、Bluetooth を ON にしてください。</string>
+</resources>
