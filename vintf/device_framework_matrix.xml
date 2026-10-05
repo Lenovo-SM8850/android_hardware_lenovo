@@ -57,4 +57,12 @@
             <instance>default</instance>
         </interface>
     </hal>
+    <hal format="aidl" optional="true">
+        <name>vendor.lenovo.hardware.lightring</name>
+        <version>1</version>
+        <interface>
+            <name>ILightRing</name>
+            <instance>default</instance>
+        </interface>
+    </hal>
 </compatibility-matrix>
