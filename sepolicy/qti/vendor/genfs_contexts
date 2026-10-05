@@ -1,4 +1,8 @@
 
+# Stock display-service uses only these two DP sysfs files.
+genfscon sysfs /devices/platform/soc/9ad2000.qcom,dp_display/prefer_mode u:object_r:vendor_sysfs_lenovo_dp:s0
+genfscon sysfs /devices/platform/soc/9ad2000.qcom,dp_display/hpd_sim u:object_r:vendor_sysfs_lenovo_dp:s0
+
 # Stock battery-service setters; leave telemetry on the supply read labels.
 genfscon sysfs /devices/platform/soc/soc:pmic-glink/soc:pmic-glink:battery-charger/power_supply/battery/charging_enabled u:object_r:vendor_sysfs_lenovo_charging_control:s0
 genfscon sysfs /devices/platform/soc/soc:pmic-glink/soc:pmic-glink:battery-charger/power_supply/battery/recharge_setting u:object_r:vendor_sysfs_lenovo_battery_control:s0

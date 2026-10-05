@@ -1,1 +1,2 @@
 vendor.lenovo.hardware.battery::IBattery u:object_r:hal_lenovobattery_hwservice:s0
+vendor.lenovo.hardware.display::IDisplay u:object_r:hal_lenovodisplay_hwservice:s0
