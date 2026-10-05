@@ -1,0 +1,19 @@
+// SPDX-License-Identifier: Apache-2.0
+
+cc_binary {
+    name: "android.hardware.health-service.lenovo",
+    vendor: true,
+    relative_install_path: "hw",
+    defaults: ["libhealth_aidl_impl_user"],
+    runtime_libs: [
+        "android.hardware.health@1.0",
+        "android.hardware.health@2.0",
+        "android.hardware.health@2.1",
+    ],
+    static_libs: ["libhealth_aidl_impl"],
+    srcs: ["main.cpp"],
+    init_rc: ["android.hardware.health-service.lenovo.rc"],
+    vintf_fragments: ["android.hardware.health-service.lenovo.xml"],
+    overrides: ["charger"],
+    cflags: ["-Wall", "-Werror"],
+}
