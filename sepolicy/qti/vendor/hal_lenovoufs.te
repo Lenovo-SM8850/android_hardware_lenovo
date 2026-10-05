@@ -1,0 +1,31 @@
+# Lenovo UFS HAL
+
+type hal_lenovoufs_default, domain, hal_lenovoufs, hal_lenovoufs_server, halserverdomain, lgsi_hwserver_domain;
+type hal_lenovoufs_default_exec, exec_type, file_type, vendor_file_type;
+type hal_lenovoufs_hwservice, hwservice_manager_type, protected_hwservice, service_manager_type;
+type hal_lenovoufs_service, hal_service_type, protected_service, service_manager_type;
+
+binder_call(dumpstate, hal_lenovoufs_default)
+allow hal_lenovoufs_client hal_lenovoufs_hwservice:hwservice_manager { find };
+binder_call(hal_lenovoufs_client, hal_lenovoufs_server)
+allow hal_lenovoufs_client hal_lenovoufs_service:service_manager { find };
+binder_call(hal_lenovoufs_client, servicemanager)
+allow hal_lenovoufs_default dumpstate:binder { transfer };
+allow hal_lenovoufs_default proc:file { ioctl read write getattr lock append map open watch watch_reads };
+allow hal_lenovoufs_default proc_dirty:file { ioctl read write getattr lock append map open watch watch_reads };
+allow hal_lenovoufs_default sysfs:file { ioctl read write getattr lock append map open watch watch_reads };
+allow hal_lenovoufs_default sysfs_devices_system_cpu:file { write append };
+allow hal_lenovoufs_default sysfs_fs_f2fs:dir { search };
+allow hal_lenovoufs_default sysfs_fs_f2fs:file { ioctl read write getattr lock append map open watch watch_reads };
+allow hal_lenovoufs_default vendor_sysfs_devfreq:dir { search };
+allow hal_lenovoufs_default vendor_sysfs_scsi_host:file { ioctl read write getattr lock append map open watch watch_reads };
+allow hal_lenovoufs_default vendor_sysfs_sd:file { ioctl read write getattr lock append map open watch watch_reads };
+allow hal_lenovoufs_server hal_lenovoufs_client:binder { call transfer };
+allow hal_lenovoufs_server hal_lenovoufs_client:fd { use };
+allow hal_lenovoufs_server hal_lenovoufs_hwservice:hwservice_manager { add find };
+allow hal_lenovoufs_server hal_lenovoufs_service:service_manager { add find };
+allow hal_lenovoufs_server hidl_base_hwservice:hwservice_manager { add };
+allow hal_lenovoufs_server servicemanager:binder { call transfer };
+allow hal_lenovoufs_server servicemanager:fd { use };
+allow servicemanager hal_lenovoufs_client:binder { transfer };
+init_daemon_domain(hal_lenovoufs_default)
