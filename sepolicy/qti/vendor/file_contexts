@@ -1,10 +1,14 @@
-# Lenovo HALs
+# Lenovo HALs and Dolby services
 /(vendor|system/vendor)/bin/hw/vendor\.lenovo\.hardware\.ufs-service            u:object_r:hal_lenovoufs_default_exec:s0
 /(vendor|system/vendor)/bin/hw/vendor\.lenovo\.hardware\.led-service            u:object_r:hal_lenovoled_default_exec:s0
 /(vendor|system/vendor)/bin/hw/vendor\.lenovo\.hardware\.battery-service        u:object_r:hal_lenovobattery_default_exec:s0
 /(vendor|system/vendor)/bin/hw/vendor\.lenovo\.hardware\.display-service        u:object_r:hal_lenovodisplay_default_exec:s0
 /(vendor|system/vendor)/bin/hw/vendor\.lenovo\.hardware\.touchscreen-service    u:object_r:hal_lenovotouchscreen_default_exec:s0
 /vendor/bin/hw/vendor\.lenovo\.hardware\.vibrator_dual-service                  u:object_r:hal_vibrator_default_exec:s0
+/vendor/bin/hw/vendor.dolby.media.c2-service-vision          u:object_r:vendorcodec_exec:s0
+/vendor/bin/hw/dvs-aidl-service                              u:object_r:dvs_aidl_default_exec:s0
+/vendor/bin/hw/vendor\.dolby\.dms\.service                   u:object_r:hal_aidl_dms_default_exec:s0
+/vendor/bin/hw/vendor\.dolby\.media\.c2-default-service-dax  u:object_r:mediacodec_exec:s0
 
 /vendor/bin/hw/vendor\.lineage\.touch-service\.lenovo    u:object_r:hal_lineage_touch_default_exec:s0
 /(vendor|system/vendor)/bin/hw/android\.hardware\.light-service\.lenovo       u:object_r:hal_light_default_exec:s0
@@ -18,5 +22,3 @@
 /vendor/bin/hw/android\.hardware\.biometrics\.fingerprint-service\.gfcap    u:object_r:hal_fingerprint_default_exec:s0
 /dev/goodix_fp    u:object_r:fingerprint_device:s0
 /vendor/bin/lenovo-cover                                  u:object_r:lenovo_cover_exec:s0
-/vendor/bin/hw/vendor\.dolby\.dms\.service                   u:object_r:hal_aidl_dms_default_exec:s0
-/vendor/bin/hw/vendor\.dolby\.media\.c2-default-service-dax  u:object_r:mediacodec_exec:s0
