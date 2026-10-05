@@ -1,1 +1,2 @@
 # Lenovo Binder services
+vendor.lenovo.hardware.battery.IBattery/default u:object_r:hal_lenovobattery_service:s0

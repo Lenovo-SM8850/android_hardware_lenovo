@@ -2,6 +2,11 @@
 
 
 
+# hal_lenovobattery
+attribute hal_lenovobattery;
+attribute hal_lenovobattery_client;
+attribute hal_lenovobattery_server;
+
 # LGSI
 attribute lgsi_core_property_type;
 attribute lgsi_hwserver;
