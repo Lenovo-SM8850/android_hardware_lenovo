@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+     SPDX-License-Identifier: Apache-2.0
+-->
+<resources>
+    <string name="app_name">Lenovo pen</string>
+    <string name="pen_notification_channel">Pen status</string>
+    <string name="pen_detected">Lenovo pen detected</string>
+    <string name="pen_battery_level">Battery: %1$d%%</string>
+    <string name="pen_battery_unknown">Battery level unavailable</string>
+    <string name="pen_pair_action">Pair</string>
+    <string name="pen_pairing">Pairing…</string>
+    <string name="pen_paired">Paired</string>
+    <string name="pen_pair_failed">Couldn\'t pair the pen. Try again with the pen near the screen.</string>
+    <string name="pen_bluetooth_off">Turn on Bluetooth to pair the pen.</string>
+</resources>

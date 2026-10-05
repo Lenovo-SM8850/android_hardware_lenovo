@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+     SPDX-License-Identifier: Apache-2.0
+-->
+<resources>
+    <!-- VID:PID (four hex digits each, no 0x) = decimal controller type after transPenType.
+         Empty by default: unknown or device-unsupported identities keep the current type. -->
+    <string-array name="config_penIdentityToControllerType" translatable="false" />
+    <!-- Disabled unless a device overlay supplies its supported pen rate. -->
+    <string name="config_penSupportedRefreshRate" translatable="false"></string>
+    <!-- Controller event/input data is disabled until selected by a device overlay. -->
+    <string name="config_penInputName" translatable="false"></string>
+    <string name="config_penUEventDevPath" translatable="false"></string>
+    <string name="config_penUEventTarget" translatable="false"></string>
+    <bool name="config_penEarlyChangeActivity">false</bool>
+</resources>
