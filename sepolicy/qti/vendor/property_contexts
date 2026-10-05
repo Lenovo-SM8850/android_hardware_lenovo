@@ -1,0 +1,2 @@
+# Shared Lenovo HAL properties
+vendor.lenovo.game_mode  u:object_r:vendor_lenovo_game_mode_prop:s0 exact bool
