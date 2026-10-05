@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<resources>
+    <string name="app_name">影片動態平滑</string>
+    <string name="settings_summary">讓所選應用程式中的影片播放更流暢。</string>
+    <string name="enabled">使用影片動態平滑</string>
+    <string name="availability">在所選應用程式中為支援的影片加入中間影格，讓畫面更流暢。變更設定後，請重新開始播放。不適用於受保護內容、HDR 或部分電視類串流播放。</string>
+    <string name="user_limit">僅限管理員使用。</string>
+    <string name="shared_uid">共用 UID 的應用程式也會共用這項設定。</string>
+    <string name="search_apps">搜尋應用程式</string>
+    <string name="no_apps">沒有相符的應用程式</string>
+</resources>
