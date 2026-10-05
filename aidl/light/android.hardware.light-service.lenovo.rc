@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: Apache-2.0
+
+service vendor.light-default /vendor/bin/hw/android.hardware.light-service.lenovo
+    class hal
+    user system
+    group system
+    gentle_kill
