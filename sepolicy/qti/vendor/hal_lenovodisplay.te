@@ -1,0 +1,23 @@
+# Lenovo display HAL
+
+type hal_lenovodisplay_default, domain, hal_lenovodisplay, hal_lenovodisplay_server, halserverdomain, lgsi_hwserver_domain;
+type hal_lenovodisplay_default_exec, exec_type, file_type, vendor_file_type;
+type hal_lenovodisplay_hwservice, hwservice_manager_type, protected_hwservice, service_manager_type;
+type hal_lenovodisplay_service, hal_service_type, protected_service, service_manager_type;
+
+# prefer_mode opens O_WRONLY; hpd_sim opens O_RDWR in the stock binary.
+allow hal_lenovodisplay_default vendor_sysfs_lenovo_dp:file { getattr open read write };
+
+binder_call(dumpstate, hal_lenovodisplay_default)
+allow hal_lenovodisplay_client hal_lenovodisplay_hwservice:hwservice_manager { find };
+binder_call(hal_lenovodisplay_client, hal_lenovodisplay_server)
+allow hal_lenovodisplay_client hal_lenovodisplay_service:service_manager { find };
+allow hal_lenovodisplay_default dumpstate:binder { transfer };
+allow hal_lenovodisplay_server hal_lenovodisplay_client:binder { call transfer };
+allow hal_lenovodisplay_server hal_lenovodisplay_client:fd { use };
+allow hal_lenovodisplay_server hal_lenovodisplay_hwservice:hwservice_manager { add find };
+allow hal_lenovodisplay_server hal_lenovodisplay_service:service_manager { add find };
+allow hal_lenovodisplay_server hidl_base_hwservice:hwservice_manager { add };
+allow hal_lenovodisplay_server servicemanager:binder { call transfer };
+allow hal_lenovodisplay_server servicemanager:fd { use };
+init_daemon_domain(hal_lenovodisplay_default)

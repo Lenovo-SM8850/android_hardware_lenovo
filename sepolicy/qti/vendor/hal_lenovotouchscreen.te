@@ -1,0 +1,29 @@
+# Lenovo touchscreen HAL
+
+type hal_lenovotouchscreen_default, domain, hal_lenovotouchscreen, hal_lenovotouchscreen_server, halserverdomain, lgsi_hwserver_domain;
+type hal_lenovotouchscreen_default_exec, exec_type, file_type, vendor_file_type;
+type hal_lenovotouchscreen_hwservice, hwservice_manager_type, protected_hwservice, service_manager_type;
+type hal_lenovotouchscreen_service, hal_service_type, protected_service, service_manager_type;
+
+binder_call(dumpstate, hal_lenovotouchscreen_default)
+allow hal_lenovotouchscreen_client hal_lenovotouchscreen_hwservice:hwservice_manager { find };
+binder_call(hal_lenovotouchscreen_client, hal_lenovotouchscreen_server)
+allow hal_lenovotouchscreen_client hal_lenovotouchscreen_service:service_manager { find };
+allow hal_lenovotouchscreen_default dumpstate:binder { transfer };
+allow hal_lenovotouchscreen_default proc_tp:dir { search };
+allow hal_lenovotouchscreen_default proc_tp:file { ioctl read write getattr lock append map open watch watch_reads };
+allow hal_lenovotouchscreen_server hal_lenovotouchscreen_client:binder { call transfer };
+allow hal_lenovotouchscreen_server hal_lenovotouchscreen_client:fd { use };
+allow hal_lenovotouchscreen_server hal_lenovotouchscreen_hwservice:hwservice_manager { add find };
+allow hal_lenovotouchscreen_server hal_lenovotouchscreen_service:service_manager { add find };
+allow hal_lenovotouchscreen_server hidl_base_hwservice:hwservice_manager { add };
+allow hal_lenovotouchscreen_server servicemanager:binder { call transfer };
+allow hal_lenovotouchscreen_server servicemanager:fd { use };
+init_daemon_domain(hal_lenovotouchscreen_default)
+
+# Allow the touchscreen service to use the split node labels.
+allow hal_lenovotouchscreen_default {
+    vendor_proc_nvt_gesture
+    vendor_proc_nvt_polling
+    vendor_proc_nvt_rotation
+}:file rw_file_perms;

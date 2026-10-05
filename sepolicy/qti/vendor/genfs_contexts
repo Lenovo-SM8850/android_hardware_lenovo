@@ -9,5 +9,20 @@ genfscon proc "/report_threshold" u:object_r:proc_tp:s0
 genfscon proc "/support_pen" u:object_r:proc_tp:s0
 
 # Stock display-service uses only these two DP sysfs files.
+genfscon sysfs /devices/platform/soc/9ad2000.qcom,dp_display/prefer_mode u:object_r:vendor_sysfs_lenovo_dp:s0
+genfscon sysfs /devices/platform/soc/9ad2000.qcom,dp_display/hpd_sim u:object_r:vendor_sysfs_lenovo_dp:s0
 
 # Stock battery-service setters; leave telemetry on the supply read labels.
+genfscon sysfs /devices/platform/soc/soc:pmic-glink/soc:pmic-glink:battery-charger/power_supply/battery/charging_enabled u:object_r:vendor_sysfs_lenovo_charging_control:s0
+genfscon sysfs /devices/platform/soc/soc:pmic-glink/soc:pmic-glink:battery-charger/power_supply/battery/recharge_setting u:object_r:vendor_sysfs_lenovo_battery_control:s0
+genfscon sysfs /devices/platform/soc/soc:pmic-glink/soc:pmic-glink:battery-charger/power_supply/battery/bypass_setting u:object_r:vendor_sysfs_lenovo_battery_control:s0
+genfscon sysfs /devices/platform/soc/soc:pmic-glink/soc:pmic-glink:battery-charger/power_supply/battery/battery_maintenance20 u:object_r:vendor_sysfs_lenovo_battery_control:s0
+genfscon sysfs /devices/platform/soc/soc:pmic-glink/soc:pmic-glink:battery-charger/power_supply/battery/battery_maintenance u:object_r:vendor_sysfs_lenovo_battery_control:s0
+genfscon sysfs /devices/platform/soc/soc:pmic-glink/soc:pmic-glink:battery-charger/power_supply/battery/protection_setting u:object_r:vendor_sysfs_lenovo_battery_control:s0
+genfscon sysfs /devices/platform/soc/soc:pmic-glink/soc:pmic-glink:battery-charger/power_supply/battery/protection_setting_eu u:object_r:vendor_sysfs_lenovo_battery_control:s0
+genfscon sysfs /devices/platform/soc/soc:pmic-glink/soc:pmic-glink:battery-charger/power_supply/battery/shipping_mode u:object_r:vendor_sysfs_lenovo_battery_control:s0
+genfscon sysfs /devices/platform/soc/soc:pmic-glink/soc:pmic-glink:battery-charger/power_supply/battery/activate_date u:object_r:vendor_sysfs_lenovo_battery_control:s0
+genfscon sysfs /devices/platform/soc/soc:pmic-glink/soc:pmic-glink:battery-charger/power_supply/usb/input_suspend u:object_r:vendor_sysfs_lenovo_battery_control:s0
+genfscon sysfs /devices/platform/soc/soc:pmic-glink/soc:pmic-glink:battery-charger/power_supply/wls_tx/cmd u:object_r:vendor_sysfs_lenovo_battery_control:s0
+genfscon sysfs /devices/platform/soc/soc:pmic-glink/soc:pmic-glink:battery-charger/power_supply/wls_tx_bot/cmd u:object_r:vendor_sysfs_lenovo_battery_control:s0
+genfscon sysfs /class/qcom-battery/fg2_activate_date u:object_r:vendor_sysfs_lenovo_battery_control:s0

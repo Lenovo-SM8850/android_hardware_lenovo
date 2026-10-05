@@ -1,2 +1,13 @@
 # Shared Lenovo HAL properties
+ro.odm.lenovo.                       u:object_r:vendor_lenovotb_init_prop:s0
+persist.odm.lenovo.                  u:object_r:vendor_lenovotb_init_prop:s0
+ro.vendor.config.lgsi.               u:object_r:vendor_lenovotb_init_prop:s0
+persist.vendor.lgsi.                 u:object_r:vendor_lenovotb_init_prop:s0
+odm.lenovo.devinfo.write_cc          u:object_r:vendor_lenovotb_init_prop:s0
+odm.lenovo.devinfo.write_model_name  u:object_r:vendor_lenovotb_init_prop:s0
+odm.lenovo.devinfo.write_display_id  u:object_r:vendor_lenovotb_init_prop:s0
+ro.odm.fingerprint.update            u:object_r:vendor_lenovotb_init_prop:s0
+vendor.lenovo.battery.  u:object_r:vendor_lgsi_battery_prop:s0
+persist.vendor.hw.ai.  u:object_r:vendor_hw_ai_prop:s0
+vendor.hw.ai.          u:object_r:vendor_hw_ai_prop:s0
 vendor.lenovo.game_mode  u:object_r:vendor_lenovo_game_mode_prop:s0 exact bool
