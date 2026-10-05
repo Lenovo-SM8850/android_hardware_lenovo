@@ -5,6 +5,7 @@
 #include <aidl/android/hardware/power/Mode.h>
 #include <android-base/file.h>
 #include <android-base/logging.h>
+#include <android-base/properties.h>
 
 using aidl::android::hardware::power::Mode;
 
@@ -12,17 +13,21 @@ namespace aidl::android::hardware::power::impl {
 
 bool isDeviceSpecificModeSupported(Mode type, bool* _aidl_return) {
 #ifdef LENOVO_DOUBLE_TAP_TO_WAKE
-    if (type != Mode::DOUBLE_TAP_TO_WAKE) {
+    if (type != Mode::DOUBLE_TAP_TO_WAKE && type != Mode::GAME) {
+#else
+    if (type != Mode::GAME) {
+#endif
         return false;
     }
-#else
-    return false;
-#endif
     *_aidl_return = true;
     return true;
 }
 
 bool setDeviceSpecificMode(Mode type, bool enabled) {
+    if (type == Mode::GAME) {
+        ::android::base::SetProperty("vendor.lenovo.game_mode", enabled ? "1" : "0");
+        return true;
+    }
 #ifdef LENOVO_DOUBLE_TAP_TO_WAKE
     if (type != Mode::DOUBLE_TAP_TO_WAKE) {
         return false;
