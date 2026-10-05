@@ -1,0 +1,20 @@
+// SPDX-License-Identifier: Apache-2.0
+
+cc_binary {
+    name: "lenovo-cover",
+    vendor: true,
+    srcs: ["main.cpp"],
+    init_rc: ["lenovo-cover.rc"],
+    shared_libs: [
+        "android.frameworks.sensorservice-V1-ndk",
+        "android.hardware.sensors-V3-ndk",
+        "libbase",
+        "libbinder_ndk",
+        "liblog",
+    ],
+    cflags: [
+        "-Wall",
+        "-Wextra",
+        "-Werror",
+    ],
+}
