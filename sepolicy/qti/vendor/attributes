@@ -1,5 +1,9 @@
-# Shared Lenovo HAL attributes
+# Shared Lenovo and Dolby HAL attributes
 
+# dvs_aidl
+attribute dvs_aidl;
+attribute dvs_aidl_client;
+attribute dvs_aidl_server;
 
 
 # hal_lenovobattery
