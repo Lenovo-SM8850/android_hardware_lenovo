@@ -1,0 +1,53 @@
+// SPDX-License-Identifier: Apache-2.0
+
+cc_library_shared {
+    name: "libaudioeffecthal.lenovo",
+    vendor: true,
+    relative_install_path: "hw",
+    enabled: select(soong_config_variable("lenovo_audio", "source_effects"), {
+        true: true,
+        default: false,
+    }),
+    srcs: [
+        "EffectConfig.cpp",
+        "EffectFactory.cpp",
+        "EffectMain.cpp",
+    ],
+    local_include_dirs: ["include"],
+    header_libs: [
+        "libaudio_system_headers",
+        "libaudioutils_headers",
+        "libsystem_headers",
+    ],
+    shared_libs: [
+        "android.hardware.audio.effect-V3-ndk",
+        "android.hardware.common-V2-ndk",
+        "android.hardware.common.fmq-V1-ndk",
+        "android.media.audio.common.types-V4-ndk",
+        "libaudioaidlcommon",
+        "libbase",
+        "libbinder_ndk",
+        "libcutils",
+        "libfmq",
+        "liblog",
+        "libtinyxml2",
+        "libutils",
+    ],
+    cflags: [
+        "-Wall",
+        "-Wextra",
+        "-Werror",
+    ],
+    required: ["lenovo_audioeffectservice_qti.xml"],
+}
+
+prebuilt_etc {
+    name: "lenovo_audioeffectservice_qti.xml",
+    src: "audioeffectservice_qti.xml",
+    sub_dir: "vintf/manifest",
+    vendor: true,
+    enabled: select(soong_config_variable("lenovo_audio", "source_effects"), {
+        true: true,
+        default: false,
+    }),
+}
