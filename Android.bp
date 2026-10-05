@@ -2,3 +2,10 @@
 
 soong_namespace {
 }
+
+prebuilt_etc {
+    name: "preinstalled-packages-lenovo.xml",
+    src: "packages/LegionHalo/preinstalled-packages-lenovo.xml",
+    sub_dir: "sysconfig",
+    product_specific: true,
+}

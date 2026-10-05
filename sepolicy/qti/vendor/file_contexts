@@ -18,3 +18,5 @@
 /vendor/bin/hw/android\.hardware\.biometrics\.fingerprint-service\.gfcap    u:object_r:hal_fingerprint_default_exec:s0
 /dev/goodix_fp    u:object_r:fingerprint_device:s0
 /vendor/bin/lenovo-cover                                  u:object_r:lenovo_cover_exec:s0
+/vendor/bin/hw/vendor\.dolby\.dms\.service                   u:object_r:hal_aidl_dms_default_exec:s0
+/vendor/bin/hw/vendor\.dolby\.media\.c2-default-service-dax  u:object_r:mediacodec_exec:s0
