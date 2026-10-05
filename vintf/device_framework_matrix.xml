@@ -42,4 +42,11 @@
             <instance>default</instance>
         </interface>
     </hal>
+    <hal format="aidl">
+        <name>vendor.lenovo.hardware.vibrator_dual</name>
+        <interface>
+            <name>IVibratorDual</name>
+            <instance>default</instance>
+        </interface>
+    </hal>
 </compatibility-matrix>
