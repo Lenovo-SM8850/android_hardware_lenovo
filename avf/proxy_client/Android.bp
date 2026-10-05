@@ -1,3 +1,8 @@
+//
+// Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
+// SPDX-License-Identifier: BSD-3-Clause-Clear
+// CLO QTVM proxy client
+
 rust_binary {
     name: "vendor.qti.qtvm.proxyclient-service",
     vendor: true,
@@ -5,6 +10,8 @@ rust_binary {
         "src/main.rs",
     ],
     init_rc: ["vendor.qti.qtvm.proxyclient-service.rc"],
+    lints: "vendor",
+    clippy_lints: "vendor",
     rustlibs: [
         "liblogger",
         "liblog_rust",
