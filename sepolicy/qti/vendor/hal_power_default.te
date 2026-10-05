@@ -1,0 +1,1 @@
+allow hal_power_default vendor_proc_nvt_gesture:file rw_file_perms;

@@ -1,0 +1,31 @@
+//
+// SPDX-FileCopyrightText: 2026 The LineageOS Project
+// SPDX-License-Identifier: Apache-2.0
+//
+
+cc_library_static {
+    name: "power-ext-lenovo",
+    vendor: true,
+    defaults: [
+        "android.hardware.power-ndk_shared",
+    ],
+    srcs: ["power-mode.cpp"],
+    shared_libs: ["libbase"],
+    cflags: [
+        "-Wall",
+        "-Wextra",
+        "-Werror",
+    ] + select(soong_config_variable("lenovopower", "double_tap_to_wake"), {
+        true: ["-DLENOVO_DOUBLE_TAP_TO_WAKE"],
+        default: [],
+    }) + select(soong_config_variable("lenovopower", "gesture_node"), {
+        any @ value: ["-DGESTURE_NODE=\"" + value + "\""],
+        default: [],
+    }) + select(soong_config_variable("lenovopower", "gesture_enable"), {
+        any @ value: ["-DGESTURE_ENABLE=\"" + value + "\""],
+        default: [],
+    }) + select(soong_config_variable("lenovopower", "gesture_disable"), {
+        any @ value: ["-DGESTURE_DISABLE=\"" + value + "\""],
+        default: [],
+    }),
+}
