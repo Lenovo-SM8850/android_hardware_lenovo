@@ -736,6 +736,88 @@ ScopedAStatus Usb::enableContaminantPresenceDetection(
   return ScopedAStatus::ok();
 }
 
+static bool hasLenovoDualPorts() {
+  return GetProperty("ro.product.manufacturer", "") == "Lenovo" &&
+         access("/sys/class/typec/port1", F_OK) == 0;
+}
+
+static bool readLenovoPartnerDataRole(const std::string &portName,
+                                      std::string &role) {
+  const std::string partner = "/sys/class/typec/" + portName + "-partner";
+  if (!ReadFileToString(partner + "/device/data_role", &role)) {
+    // UCSI kernels may omit the partner's device link. Do not treat the
+    // always-present port data_role node as evidence of a connection.
+    if (access(partner.c_str(), F_OK) != 0 ||
+        !ReadFileToString("/sys/class/typec/" + portName + "/data_role", &role)) {
+      role.clear();
+      return false;
+    }
+  }
+  role = Trim(role);
+  extractRole(role);
+  return true;
+}
+
+static void updateLenovoDualPortPower(Usb *usb) {
+  std::string port0Role, port1Role, port0Mode, port1Mode;
+  const bool port0Online = readLenovoPartnerDataRole("port0", port0Role);
+  const bool port1Online = readLenovoPartnerDataRole("port1", port1Role);
+  if (!ReadFileToString("/sys/class/typec/port0/power_operation_mode", &port0Mode) ||
+      !ReadFileToString("/sys/class/typec/port1/power_operation_mode", &port1Mode)) {
+    ALOGE("Lenovo: read power_operation_mode failed");
+    return;
+  }
+  port0Mode = Trim(port0Mode);
+  port1Mode = Trim(port1Mode);
+  const bool anyPortPd = port0Mode == "usb_power_delivery" ||
+                         port1Mode == "usb_power_delivery";
+  // Stock gives an online non-PD port0 priority over a PD port1 because
+  // the two connectors share the gadget's power descriptors.
+  const bool selfPowered = anyPortPd &&
+                          !(port0Online && port0Mode != "usb_power_delivery");
+  const std::string mode = selfPowered ? "usb_power_delivery" : "default";
+  ALOGI("port0_data_role = %s, port0_online=%d, port1_data_role = %s, "
+        "port1_online=%d, any_port_pd=%d",
+        port0Role.c_str(), port0Online, port1Role.c_str(), port1Online, anyPortPd);
+  if (usb->mPowerOpMode == mode) return;
+
+  const std::string maxPower = GADGET_PATH "configs/b.1/MaxPower";
+  const std::string attributes = GADGET_PATH "configs/b.1/bmAttributes";
+  if (selfPowered) {
+    if (usb->mMaxPower.empty()) {
+      std::string originalMaxPower, originalAttributes;
+      if (!ReadFileToString(maxPower, &originalMaxPower) ||
+          !ReadFileToString(attributes, &originalAttributes) ||
+          Trim(originalMaxPower).empty() || Trim(originalAttributes).empty()) {
+        ALOGE("Lenovo: unable to save gadget power descriptors");
+        return;
+      }
+      usb->mMaxPower = originalMaxPower;
+      usb->mAttributes = originalAttributes;
+    }
+    const bool wrotePower = WriteStringToFile("0", maxPower);
+    const bool wroteAttributes = WriteStringToFile("0xc0", attributes);
+    if (!wrotePower || !wroteAttributes) {
+      // Retain the originals and retry on the next Type-C event.
+      usb->mPowerOpMode.clear();
+      ALOGE("Lenovo: unable to set PD gadget power descriptors");
+      return;
+    }
+  } else if (!usb->mMaxPower.empty()) {
+    const bool wrotePower = WriteStringToFile(usb->mMaxPower, maxPower);
+    const bool wroteAttributes = WriteStringToFile(usb->mAttributes, attributes);
+    if (!wrotePower || !wroteAttributes) {
+      usb->mPowerOpMode.clear();
+      ALOGE("Lenovo: unable to restore gadget power descriptors");
+      return;
+    }
+    usb->mMaxPower.clear();
+    usb->mAttributes.clear();
+  }
+  // In dual-port mode this records the applied policy, not just port0's mode.
+  usb->mPowerOpMode = mode;
+}
+
 static void handle_typec_uevent(Usb *usb, const char *msg) {
   ALOGI("uevent received %s", msg);
 
@@ -749,7 +831,9 @@ static void handle_typec_uevent(Usb *usb, const char *msg) {
   }
 
   std::string power_operation_mode;
-  if (ReadFileToString("/sys/class/typec/port0/power_operation_mode",
+  if (hasLenovoDualPorts()) {
+    updateLenovoDualPortPower(usb);
+  } else if (ReadFileToString("/sys/class/typec/port0/power_operation_mode",
                        &power_operation_mode)) {
     power_operation_mode = Trim(power_operation_mode);
     if (usb->mPowerOpMode == power_operation_mode) {
