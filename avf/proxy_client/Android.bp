@@ -1,0 +1,25 @@
+rust_binary {
+    name: "vendor.qti.qtvm.proxyclient-service",
+    vendor: true,
+    srcs: [
+        "src/main.rs",
+    ],
+    init_rc: ["vendor.qti.qtvm.proxyclient-service.rc"],
+    rustlibs: [
+        "liblogger",
+        "liblog_rust",
+        "libbinder_rs",
+        "libnix",
+        "libserde",
+        "libserde_json",
+        "liblibc",
+        "librustutils",
+        "vendor.qti.AvfQcvmManager-V1-rust",
+    ],
+    shared_libs: [
+        "libcutils",
+    ],
+    proc_macros: [
+        "libserde_derive",
+    ],
+}
