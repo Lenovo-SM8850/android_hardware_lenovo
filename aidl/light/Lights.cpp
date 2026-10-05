@@ -3,6 +3,7 @@
  */
 
 #include "Lights.h"
+#include "RingEffectEncoder.h"
 
 namespace aidl::android::hardware::light {
 namespace {
@@ -46,6 +47,29 @@ ndk::ScopedAStatus Lights::setLightState(int32_t id, const HwLightState& state) 
     return applyLocked();
 }
 
+ndk::ScopedAStatus Lights::setEffect(const ::aidl::vendor::lenovo::hardware::lightring::Effect& effect) {
+    if (effect.type < 0 || effect.type > 3 || effect.colors.empty() || effect.colors.size() > 9 ||
+        (effect.type < 2 && effect.colors.size() != 1) || effect.speed < 0 || effect.speed > 2 ||
+        effect.brightness < 0 || effect.brightness > 255) {
+        return ndk::ScopedAStatus::fromExceptionCode(EX_ILLEGAL_ARGUMENT);
+    }
+    for (int32_t color : effect.colors) {
+        if (color < 0 || color > 0xffffff)
+            return ndk::ScopedAStatus::fromExceptionCode(EX_ILLEGAL_ARGUMENT);
+    }
+    std::lock_guard lock(mMutex);
+    if (mStopping) return ndk::ScopedAStatus::fromExceptionCode(EX_ILLEGAL_STATE);
+    mEffect = effect;
+    return applyLocked();
+}
+
+ndk::ScopedAStatus Lights::clearEffect() {
+    std::lock_guard lock(mMutex);
+    if (mStopping) return ndk::ScopedAStatus::fromExceptionCode(EX_ILLEGAL_STATE);
+    mEffect.reset();
+    return applyLocked();
+}
+
 ndk::ScopedAStatus Lights::applyLocked() {
     int error = 0;
     bool higherActive = false;
@@ -57,7 +81,9 @@ ndk::ScopedAStatus Lights::applyLocked() {
         }
     }
     if (!higherActive) {
-        error = mBackend.apply(HwLightState{});
+        error = mEffect ? mBackend.applyPayload(::lenovo::lightring::encodeEffect(
+                mEffect->type, mEffect->colors, mEffect->speed, mEffect->brightness)) :
+                mBackend.apply(HwLightState{});
     }
     if (error) return ndk::ScopedAStatus::fromServiceSpecificError(error);
     return ndk::ScopedAStatus::ok();
