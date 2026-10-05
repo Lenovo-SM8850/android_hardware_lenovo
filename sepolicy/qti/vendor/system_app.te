@@ -1,0 +1,2 @@
+# LenovoTouchscreenRotation shares android.uid.system. Only these two nodes.
+allow system_app vendor_proc_nvt_rotation:file rw_file_perms;

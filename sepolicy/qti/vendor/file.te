@@ -4,5 +4,6 @@ type proc_tp, fs_type, proc_type;
 # NVT nodes split by owner; proc_tp remains for the stock pen/game HAL.
 type vendor_proc_nvt_gesture, fs_type, proc_type;
 type vendor_proc_nvt_polling, fs_type, proc_type;
+type vendor_proc_nvt_rotation, fs_type, proc_type;
 
 # Stock Lenovo battery setters and DP mode/hotplug controls.
