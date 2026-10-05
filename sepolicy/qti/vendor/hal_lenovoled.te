@@ -1,0 +1,23 @@
+# Lenovo LED HAL
+
+type hal_lenovoled_default, domain, hal_lenovoled, hal_lenovoled_server, halserverdomain;
+type hal_lenovoled_default_exec, exec_type, file_type, vendor_file_type;
+type hal_lenovoled_hwservice, hwservice_manager_type, protected_hwservice;
+type hal_lenovoled_service, protected_service, service_manager_type, vendor_service;
+
+allow dumpstate hal_lenovoled_default:binder { call };
+allow hal_lenovoled_client hal_lenovoled_hwservice:hwservice_manager { find };
+binder_call(hal_lenovoled_client, hal_lenovoled_server)
+allow hal_lenovoled_client hal_lenovoled_service:service_manager { find };
+binder_call(hal_lenovoled_client, servicemanager)
+allow hal_lenovoled_default sysfs_leds:dir { search };
+allow hal_lenovoled_default sysfs_leds:file { read write getattr open };
+allow hal_lenovoled_server hal_lenovoled_client:binder { call transfer };
+allow hal_lenovoled_server hal_lenovoled_client:fd { use };
+allow hal_lenovoled_server hal_lenovoled_hwservice:hwservice_manager { add find };
+allow hal_lenovoled_server hal_lenovoled_service:service_manager { add find };
+allow hal_lenovoled_server hidl_base_hwservice:hwservice_manager { add };
+allow hal_lenovoled_server servicemanager:binder { call transfer };
+allow hal_lenovoled_server servicemanager:fd { use };
+allow servicemanager hal_lenovoled_client:binder { transfer };
+init_daemon_domain(hal_lenovoled_default)
