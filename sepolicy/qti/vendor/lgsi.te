@@ -1,0 +1,18 @@
+# Shared Lenovo HAL attributes
+
+allow domain lgsi_core_property_type:file { read getattr map open };
+allow lgsi_hwserver_domain platform_app:binder { call transfer };
+allow lgsi_hwserver_domain platform_app:fd { use };
+allow lgsi_hwserver_domain system_app:binder { call transfer };
+allow lgsi_hwserver_domain system_app:fd { use };
+allow lgsi_hwserver_domain system_server:binder { transfer };
+allow lgsi_hwserver_domain system_server:fd { use };
+allow platform_app lgsi_hwserver:hwservice_manager { find };
+allow platform_app lgsi_hwserver_domain:binder { call transfer };
+allow platform_app lgsi_hwserver_domain:fd { use };
+allow system_app lgsi_hwserver:hwservice_manager { find };
+allow system_app lgsi_hwserver_domain:binder { call transfer };
+allow system_app lgsi_hwserver_domain:fd { use };
+allow system_server lgsi_hwserver:hwservice_manager { find };
+allow system_server lgsi_hwserver_domain:binder { call transfer };
+allow system_server lgsi_hwserver_domain:fd { use };

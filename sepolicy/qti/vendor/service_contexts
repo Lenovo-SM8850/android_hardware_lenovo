@@ -1,0 +1,7 @@
+# Lenovo Binder services
+vendor.lenovo.hardware.battery.IBattery/default u:object_r:hal_lenovobattery_service:s0
+vendor.lenovo.hardware.display.IDisplay/default u:object_r:hal_lenovodisplay_service:s0
+vendor.lenovo.hardware.touchscreen.ITouchscreen/default u:object_r:hal_lenovotouchscreen_service:s0
+vendor.lenovo.hardware.ufs.IUfs/default u:object_r:hal_lenovoufs_service:s0
+vendor.lenovo.hardware.led.ILed/default u:object_r:hal_lenovoled_service:s0
+vendor.lenovo.hardware.vibrator_dual.IVibratorDual/default u:object_r:hal_vibrator_service:s0

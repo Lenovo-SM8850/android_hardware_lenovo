@@ -1,0 +1,5 @@
+vendor.lenovo.hardware.battery::IBattery u:object_r:hal_lenovobattery_hwservice:s0
+vendor.lenovo.hardware.display::IDisplay u:object_r:hal_lenovodisplay_hwservice:s0
+vendor.lenovo.hardware.touchscreen::ITouchscreen              u:object_r:hal_lenovotouchscreen_hwservice:s0
+vendor.lenovo.hardware.ufs::IUfs u:object_r:hal_lenovoufs_hwservice:s0
+vendor.lenovo.hardware.led::ILed              u:object_r:hal_lenovoled_hwservice:s0
