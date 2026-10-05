@@ -1,0 +1,17 @@
+// SPDX-License-Identifier: Apache-2.0
+
+// Dolby Vision service
+android_app {
+    name: "LenovoDolbyVision",
+
+    srcs: ["src/**/*.java"],
+    static_libs: ["vendor.dolby.dvs-V1-java"],
+    resource_dirs: ["res"],
+    manifest: "AndroidManifest.xml",
+
+    // Hidden APIs
+    platform_apis: true,
+    certificate: "platform",
+    system_ext_specific: true,
+
+}

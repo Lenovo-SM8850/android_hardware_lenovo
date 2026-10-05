@@ -11,7 +11,7 @@ aidl_interface {
             enabled: false,
         },
         ndk: {
-            enabled: false,
+            enabled: true,
         },
         java: {
             sdk_version: "module_current",

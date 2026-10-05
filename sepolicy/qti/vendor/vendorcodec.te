@@ -1,0 +1,17 @@
+# Dolby Vision codec2 service (vendor.dolby.media.c2-service-vision).
+
+type vendorcodec, domain, dvs_aidl_client, hal_allocator_client, hal_codec2, hal_codec2_server, hal_graphics_allocator_client, hal_sensors_client, halclientdomain, halserverdomain;
+type vendorcodec_exec, exec_type, file_type, vendor_file_type;
+
+allow hal_graphics_composer_default vendorcodec:fd { use };
+allow vendorcodec dmabuf_system_heap_device:chr_file { ioctl read write getattr map open };
+allow vendorcodec fwk_sensor_hwservice:hwservice_manager { find };
+allow vendorcodec fwk_sensor_service:service_manager { find };
+allow vendorcodec gpu_device:chr_file { ioctl read write getattr open };
+allow vendorcodec gpu_device:chr_file { map };
+allow vendorcodec vendor_sysfs_graphics:dir { read open search };
+allow vendorcodec vendor_sysfs_graphics:file { read getattr open };
+allow vendorcodec vendor_sysfs_kgsl:file { read };
+allow vendorcodec vndbinder_device:chr_file { ioctl read write getattr lock append map open watch watch_reads };
+allow vendorcodec vndservicemanager:binder { call transfer };
+init_daemon_domain(vendorcodec)

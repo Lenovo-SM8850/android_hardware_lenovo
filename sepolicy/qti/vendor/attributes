@@ -1,28 +1,32 @@
-# Shared Lenovo HAL attributes
+# Shared Lenovo and Dolby HAL attributes
+
+# Dvs_aidl
+attribute dvs_aidl;
+attribute dvs_aidl_client;
+attribute dvs_aidl_server;
 
 
-
-# hal_lenovobattery
+# Hal_lenovobattery
 attribute hal_lenovobattery;
 attribute hal_lenovobattery_client;
 attribute hal_lenovobattery_server;
 
-# hal_lenovodisplay
+# Hal_lenovodisplay
 attribute hal_lenovodisplay;
 attribute hal_lenovodisplay_client;
 attribute hal_lenovodisplay_server;
 
-# hal_lenovoled
+# Hal_lenovoled
 attribute hal_lenovoled;
 attribute hal_lenovoled_client;
 attribute hal_lenovoled_server;
 
-# hal_lenovotouchscreen
+# Hal_lenovotouchscreen
 attribute hal_lenovotouchscreen;
 attribute hal_lenovotouchscreen_client;
 attribute hal_lenovotouchscreen_server;
 
-# hal_lenovoufs
+# Hal_lenovoufs
 attribute hal_lenovoufs;
 attribute hal_lenovoufs_client;
 attribute hal_lenovoufs_server;
