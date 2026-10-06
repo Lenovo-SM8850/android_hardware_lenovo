@@ -1,0 +1,20 @@
+# SPDX-License-Identifier: Apache-2.0
+
+service vendor.thpd /vendor/bin/hw/thpd
+    class hal
+    user system
+    group system
+    capabilities SYS_NICE
+    disabled
+    restart_period 30
+
+on post-fs-data
+    wait /dev/thp 5
+    wait /dev/input_agent 5
+    chown system system /dev/thp
+    chmod 0660 /dev/thp
+    chown system system /dev/input_agent
+    chmod 0660 /dev/input_agent
+    chown system system /sys/bus/platform/devices/gt9976n_thp.0/screen_state
+    chmod 0660 /sys/bus/platform/devices/gt9976n_thp.0/screen_state
+    start vendor.thpd
