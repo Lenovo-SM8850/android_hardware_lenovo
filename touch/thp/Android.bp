@@ -1,0 +1,22 @@
+// SPDX-License-Identifier: Apache-2.0
+
+cc_binary {
+    name: "thpd",
+    vendor: true,
+    relative_install_path: "hw",
+    compile_multilib: "64",
+    srcs: ["main.cpp"],
+    init_rc: ["thpd.rc"],
+    shared_libs: [
+        "libdl",
+        "liblog",
+    ],
+    stl: "none",
+    // Let the stock AFE's ioctl@LIBC binding observe cmd101 in the host.
+    ldflags: ["-Wl,--export-dynamic-symbol=ioctl"],
+    cflags: [
+        "-Wall",
+        "-Wextra",
+        "-Werror",
+    ],
+}
