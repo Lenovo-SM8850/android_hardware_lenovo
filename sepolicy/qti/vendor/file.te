@@ -10,3 +10,8 @@ type vendor_proc_nvt_rotation, fs_type, proc_type;
 type vendor_sysfs_lenovo_battery_control, fs_type, sysfs_type;
 type vendor_sysfs_lenovo_dp, fs_type, sysfs_type;
 type vendor_sysfs_lenovo_charging_control, fs_type, sysfs_type;
+
+# Goodix THP host device nodes.
+type thp_device, dev_type;
+type input_agent_device, dev_type;
+type vendor_sysfs_thp_screen_state, fs_type, sysfs_type;
