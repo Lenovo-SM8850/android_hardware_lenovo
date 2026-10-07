@@ -26,6 +26,7 @@ root = args.android_source.resolve()
 device = args.device.resolve()
 out = args.scratch.resolve()
 core = Path(__file__).resolve().parent.parent
+app = core.parent / "packages/McfgLoader"
 aidl = core / "aidl"
 name = "vendor.lenovo.hardware.mcfg"
 if out == root or out.is_relative_to(root):
@@ -70,6 +71,11 @@ includes = [out / "include", root / "frameworks/native/libs/binder/ndk/include_n
             root / "system/libbase/include", root / "external/jsoncpp/include", root / "external/selinux/libselinux/include"]
 run([clang, "-std=c++17", "-Wall", "-Wextra", "-Werror", "-D__INTRODUCED_IN(x)=", "-Wno-nullability-completeness",
      *["-I" + str(p) for p in includes], "-c", core / "service.cpp", "-o", out / "service.o"])
+run([out / "tools/aapt2", "compile", "--dir", app / "res", "-o", out / "res/resources.zip"])
+run([out / "tools/aapt2", "link", "--manifest", app / "AndroidManifest.xml", "-I", root / "prebuilts/sdk/current/public/android.jar",
+     "--java", out / "gen", "--min-sdk-version", "35", "--target-sdk-version", "37", "-o", out / "res/resources.apk", out / "res/resources.zip"])
+run(["javac", "-encoding", "UTF-8", "-Xlint:all", "-classpath", str(out / "framework.jar") + ":" + str(root / "prebuilts/sdk/current/system/android.jar"),
+     "-d", out / "classes", *sorted((out / "java").rglob("*.java")), *sorted((out / "gen").rglob("*.java")), *sorted((app / "src").rglob("*.java"))])
 policy = device / "sepolicy"
 fragments = [policy / "public/attributes", policy / "public/service.te", policy / "vendor/file.te", policy / "vendor/property.te",
              policy / "private/lenovo_mcfg_coordinator.te", policy / "public/hal_lenovo_mcfg.te", policy / "vendor/vendor_lenovo_mcfg_loader.te"]
@@ -86,5 +92,5 @@ run([out / "tools/checkseapp", "-p", out / "policy/policy", "-o", out / "policy/
 run([out / "tools/host_init_verifier", device / "rootdir/etc/init.lenovo.mcfg-loader.rc"])
 for xml in ["manifest_mcfg_loader.xml", "framework_matrix_mcfg_loader.xml"]:
     run([out / "tools/assemble_vintf", "-i", device / "vintf" / xml, "-o", out / xml])
-print("PASS: frozen AIDL, native object, strict policy/context checks, init rc, VINTF XML")
+print("PASS: frozen AIDL, native object, app resources/Java, strict policy/context checks, init rc, VINTF XML")
 print("NOT VERIFIED: Android target link/Soong, debug router policy, Treble policy split, runtime/device transport and modem behavior")

@@ -73,3 +73,8 @@ with tempfile.TemporaryDirectory(prefix="mcfg-test-", dir=args.scratch) as direc
             raise ValueError("truncated MBN accepted")
         print("REJECTION PASS: truncated MBN: " + result.stderr.decode().strip(), flush=True)
         print("PASS: parser parity, durable imported precedence, aliases, mixed-carrier refusal and deletion", flush=True)
+    classes = Path(directory) / "java"
+    classes.mkdir()
+    gate = core.parent / "packages/McfgLoader/src/io/github/miner7222/mcfg/CoordinatorState.java"
+    subprocess.run(["javac", "-d", str(classes), str(gate), str(core / "tests/CoordinatorStateTest.java")], check=True)
+    subprocess.run(["java", "-ea", "-cp", str(classes), "io.github.miner7222.mcfg.CoordinatorStateTest"], check=True)
