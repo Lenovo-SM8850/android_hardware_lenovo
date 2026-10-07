@@ -6,3 +6,7 @@
 /(vendor|system/vendor)/bin/hw/vendor\.lenovo\.hardware\.touchscreen-service    u:object_r:hal_lenovotouchscreen_default_exec:s0
 /vendor/bin/hw/vendor\.lenovo\.hardware\.vibrator_dual-service                  u:object_r:hal_vibrator_default_exec:s0
 
+
+# Goodix capacitive fingerprint HAL.
+/vendor/bin/hw/android\.hardware\.biometrics\.fingerprint-service\.gfcap    u:object_r:hal_fingerprint_default_exec:s0
+/dev/goodix_fp    u:object_r:fingerprint_device:s0
