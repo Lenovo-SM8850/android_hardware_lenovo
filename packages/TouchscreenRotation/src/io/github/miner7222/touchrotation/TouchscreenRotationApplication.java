@@ -11,6 +11,7 @@ import android.os.HandlerThread;
 import android.util.Log;
 import android.view.Display;
 
+import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -82,7 +83,9 @@ public final class TouchscreenRotationApplication extends Application
         try {
             writeNode("/proc/panel_direction", Integer.toString(rotation));
             // Keep sidebar/taskbar exemptions disabled; the driver buffer is 16 bytes.
-            writeNode("/proc/edge_grid_zone", "0,0,0,0");
+            if (!new File("/sys/bus/platform/devices/gt9976n_thp.0").exists()) {
+                writeNode("/proc/edge_grid_zone", "0,0,0,0");
+            }
             mAppliedRotation = rotation;
             mRetryCount = 0;
         } catch (IOException e) {
