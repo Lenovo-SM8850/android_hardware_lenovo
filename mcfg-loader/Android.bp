@@ -1,0 +1,60 @@
+// SPDX-License-Identifier: Apache-2.0
+cc_library_static {
+    name: "liblenovo_mcfg_core",
+    vendor: true,
+    host_supported: true,
+    srcs: [
+        "ProfileStore.cpp",
+        "MbnParser.cpp",
+        "Transaction.cpp",
+        "EfsClient.cpp",
+        "DiagTransport.cpp",
+    ],
+    shared_libs: [
+        "libjsoncpp",
+        "libcrypto",
+        "libz",
+    ],
+    target: {
+        android: {
+            shared_libs: ["libdl"],
+        },
+        host: {
+            host_ldlibs: ["-ldl"],
+        },
+    },
+    cflags: [
+        "-Wall",
+        "-Wextra",
+        "-Werror",
+        "-fexceptions",
+    ],
+    cpp_std: "c++17",
+    export_include_dirs: ["."],
+}
+
+cc_binary {
+    name: "vendor.lenovo.mcfg-loader",
+    vendor: true,
+    compile_multilib: "64",
+    srcs: ["service.cpp"],
+    static_libs: ["liblenovo_mcfg_core"],
+    shared_libs: [
+        "vendor.lenovo.hardware.mcfg-V2-ndk",
+        "libbinder_ndk",
+        "libbase",
+        "liblog",
+        "libjsoncpp",
+        "libcrypto",
+        "libz",
+        "libdl",
+        "libselinux",
+    ],
+    cflags: [
+        "-Wall",
+        "-Wextra",
+        "-Werror",
+        "-fexceptions",
+    ],
+    cpp_std: "c++17",
+}

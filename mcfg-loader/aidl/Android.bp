@@ -1,0 +1,28 @@
+// SPDX-License-Identifier: Apache-2.0
+aidl_interface {
+    name: "vendor.lenovo.hardware.mcfg",
+    owner: "lenovo",
+    vendor_available: true,
+    srcs: ["vendor/lenovo/hardware/mcfg/*.aidl"],
+    stability: "vintf",
+    backend: {
+        cpp: {
+            enabled: false,
+        },
+        java: {
+            sdk_version: "system_current",
+        },
+    },
+    versions_with_info: [
+        {
+            version: "1",
+            imports: [],
+        },
+        {
+            version: "2",
+            imports: [],
+        },
+
+    ],
+    frozen: true,
+}
