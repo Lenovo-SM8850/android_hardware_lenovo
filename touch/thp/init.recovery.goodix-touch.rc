@@ -1,0 +1,19 @@
+# SPDX-License-Identifier: Apache-2.0
+
+service goodix.thpd.recovery /system/bin/thpd-goodix-recovery
+    class core
+    user root
+    group root system input
+    capabilities SYS_NICE
+    disabled
+    restart_period 30
+    seclabel u:r:recovery:s0
+
+on post-fs-data
+    mkdir /system/etc/thp-recovery 0755 root root
+    wait /dev/thp 10
+    wait /dev/input_agent 10
+    restorecon /dev/thp /dev/input_agent
+    chmod 0600 /dev/thp
+    chmod 0600 /dev/input_agent
+    start goodix.thpd.recovery
