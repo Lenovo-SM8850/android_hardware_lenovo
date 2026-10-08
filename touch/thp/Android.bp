@@ -20,3 +20,30 @@ cc_binary {
         "-Werror",
     ],
 }
+
+cc_binary {
+    name: "thpd-goodix-recovery",
+    recovery: true,
+    required: ["init.recovery.goodix-touch.rc"],
+    compile_multilib: "64",
+    srcs: ["main.cpp"],
+    shared_libs: [
+        "libdl",
+        "liblog",
+    ],
+    stl: "none",
+    ldflags: ["-Wl,--export-dynamic-symbol=ioctl"],
+    cflags: [
+        "-Wall",
+        "-Wextra",
+        "-Werror",
+        "-DTHPD_RECOVERY",
+    ],
+}
+
+prebuilt_etc {
+    name: "init.recovery.goodix-touch.rc",
+    src: "init.recovery.goodix-touch.rc",
+    sub_dir: "init",
+    recovery: true,
+}
