@@ -22,11 +22,12 @@ internal class PenRefreshRateCap(private val context: Context, private val handl
     private var user = -1
     private var resolver = context.contentResolver
     private var active = false
+    private var pollingActive = false
     private val enforce = object : Runnable {
         override fun run() {
-            if (!active) return
+            if (!active && !pollingActive) return
             apply()
-            if (active) handler.postDelayed(this, 1000)
+            if (active || pollingActive) handler.postDelayed(this, 1000)
         }
     }
     private val observer = object : ContentObserver(handler) {
@@ -40,27 +41,39 @@ internal class PenRefreshRateCap(private val context: Context, private val handl
     }
 
     fun activate() {
-        if (rate == null || active) return
+        activatePolling()
+        if (!pollingActive || active) return
+        active = true
+        for (key in KEYS) {
+            resolver.registerContentObserver(Settings.System.getUriFor(key), false, observer)
+        }
+        apply()
+    }
+
+    fun activatePolling() {
+        if (rate == null || pollingActive) return
         if (journal.contains("user")) {
             recover()
             if (journal.contains("user")) return
         }
-        if (!active) {
-            user = ActivityManager.getCurrentUser()
-            resolver = context.createContextAsUser(UserHandle.of(user), 0).contentResolver
-            active = true
-            for (key in KEYS) {
-                resolver.registerContentObserver(Settings.System.getUriFor(key), false, observer)
-            }
-        }
+        user = ActivityManager.getCurrentUser()
+        resolver = context.createContextAsUser(UserHandle.of(user), 0).contentResolver
+        pollingActive = true
         apply()
         handler.postDelayed(enforce, 1000)
+    }
+
+    fun releaseRefresh() {
+        if (active) resolver.unregisterContentObserver(observer)
+        active = false
+        if (journal.contains("user")) restore(journal.getInt("user", 0), refreshOnly = true)
     }
 
     fun release() {
         handler.removeCallbacks(enforce)
         if (active) resolver.unregisterContentObserver(observer)
         active = false
+        pollingActive = false
         if (journal.contains("user")) restore(journal.getInt("user", 0))
     }
 
@@ -74,31 +87,35 @@ internal class PenRefreshRateCap(private val context: Context, private val handl
             return
         }
         try {
-            // MIN must also be bounded: DMD uses max(MIN, PEAK) for the peak vote.
-            for (key in listOf(Settings.System.MIN_REFRESH_RATE, Settings.System.PEAK_REFRESH_RATE)) {
-                val raw = Settings.System.getString(resolver, key)
-                val value = raw?.toFloatOrNull()
-                val needsCap = if (key == Settings.System.PEAK_REFRESH_RATE) {
-                    value == null || !value.isFinite() || value == 0f || value > cap
-                } else {
-                    value != null && (!value.isFinite() || value > cap)
-                }
-                updateSavedChoice(key, raw)
-                if (needsCap && raw != cap.toString() && save(key, raw, cap.toString())) {
-                    check(Settings.System.putString(resolver, key, cap.toString()))
+            if (active) {
+                // MIN must also be bounded: DMD uses max(MIN, PEAK) for the peak vote.
+                for (key in listOf(Settings.System.MIN_REFRESH_RATE, Settings.System.PEAK_REFRESH_RATE)) {
+                    val raw = Settings.System.getString(resolver, key)
+                    val value = raw?.toFloatOrNull()
+                    val needsCap = if (key == Settings.System.PEAK_REFRESH_RATE) {
+                        value == null || !value.isFinite() || value == 0f || value > cap
+                    } else {
+                        value != null && (!value.isFinite() || value > cap)
+                    }
+                    updateSavedChoice(key, raw)
+                    if (needsCap && raw != cap.toString() && save(key, raw, cap.toString())) {
+                        check(Settings.System.putString(resolver, key, cap.toString()))
+                    }
                 }
             }
-            // Disable high polling through the touch AIDL while the pen is active.
-            val polling = pollingService()
-            if (polling != null) {
-                val enabled = polling.enabled
-                val raw = if (enabled) "1" else "0"
-                updateSavedChoice("polling", raw)
-                if (enabled && save("polling", raw, "0")) {
-                    polling.enabled = false
+            // Keep high polling disabled while the pen session remains ready.
+            if (pollingActive) {
+                val polling = pollingService()
+                if (polling != null) {
+                    val enabled = polling.enabled
+                    val raw = if (enabled) "1" else "0"
+                    updateSavedChoice("polling", raw)
+                    if (enabled && save("polling", raw, "0")) {
+                        polling.enabled = false
+                    }
+                } else {
+                    Log.w(TAG, "High touch polling service unavailable")
                 }
-            } else {
-                Log.w(TAG, "High touch polling service unavailable")
             }
         } catch (e: Exception) {
             Log.e(TAG, "Cannot apply pen refresh rate cap", e)
@@ -128,9 +145,9 @@ internal class PenRefreshRateCap(private val context: Context, private val handl
         journal.edit().remove("original:$key").remove("applied:$key").commit()
     }
 
-    private fun restore(savedUser: Int) {
+    private fun restore(savedUser: Int, refreshOnly: Boolean = false) {
         val cr = context.createContextAsUser(UserHandle.of(savedUser), 0).contentResolver
-        for (key in savedKeys()) {
+        for (key in savedKeys().filter { !refreshOnly || it != "polling" }) {
             try {
                 val original = journal.getString("original:$key", null)
                 val applied = journal.getString("applied:$key", null)
