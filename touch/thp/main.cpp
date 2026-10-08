@@ -36,9 +36,15 @@ constexpr size_t kLogLevelOffset = 0x310;
 constexpr size_t kStockFlagsOffset = 0x314;
 constexpr size_t kFileLogEnableOffset = 0x316;
 constexpr size_t kDeviceIdOffset = 0x318;
+#ifdef THPD_WUJI_RECOVERY
+constexpr char kLibraryDir[] = "/system/lib64/";
+constexpr char kFirmwareDir[] = "/system/etc/thp-recovery/";
+constexpr char kTscLibrary[] = "/system/lib64/libgdix_tsc.so";
+#else
 constexpr char kLibraryDir[] = "/vendor/lib64/";
 constexpr char kFirmwareDir[] = "/vendor/firmware/";
 constexpr char kTscLibrary[] = "/vendor/lib64/libgdix_tsc.so";
+#endif
 
 static_assert(sizeof(void*) == 8, "The stock THP ABI requires arm64");
 static_assert(__BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__, "The stock THP ABI is little-endian");
