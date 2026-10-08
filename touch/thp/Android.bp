@@ -20,3 +20,22 @@ cc_binary {
         "-Werror",
     ],
 }
+
+cc_binary {
+    name: "thpd-wuji-recovery",
+    recovery: true,
+    compile_multilib: "64",
+    srcs: ["main.cpp"],
+    shared_libs: [
+        "libdl",
+        "liblog",
+    ],
+    stl: "none",
+    ldflags: ["-Wl,--export-dynamic-symbol=ioctl"],
+    cflags: [
+        "-Wall",
+        "-Wextra",
+        "-Werror",
+        "-DTHPD_WUJI_RECOVERY",
+    ],
+}
