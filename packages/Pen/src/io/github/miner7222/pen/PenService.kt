@@ -74,6 +74,11 @@ class PenService : Service() {
     private var sessionActive = false
     private var connectedPen = false
     private val release = Runnable {
+        if (connectedPen && powerManager.isInteractive) {
+            // Stock expires only the display request; keep the connected pen ready.
+            cap.releaseRefresh()
+            return@Runnable
+        }
         sessionActive = false
         cap.release()
         notifications.cancel(NOTIFICATION_ID)
@@ -256,6 +261,7 @@ class PenService : Service() {
             if (!wasConnected) Log.i(TAG, "Connected pen HID: ${device.name}")
             selectPenType(device.vendorId, device.productId)
             if (powerManager.isInteractive) {
+                cap.activatePolling()
                 // Bootstrap before the first stroke, including screen/user resume.
                 // Device changes while connected must not renew pen activity.
                 if (!wasConnected || !sessionActive) markActivity(false)
@@ -460,6 +466,7 @@ class PenService : Service() {
         inputReceiver?.dispose()
         monitor?.dispose()
         endSession()
+        cap.destroy()
         handler.removeCallbacksAndMessages(null)
         super.onDestroy()
     }
