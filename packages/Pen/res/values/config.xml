@@ -11,6 +11,6 @@
     <!-- Controller event/input data is disabled until selected by a device overlay. -->
     <string name="config_penInputName" translatable="false"></string>
     <string name="config_penUEventDevPath" translatable="false"></string>
-    <string name="config_penUEventTarget" translatable="false"></string>
+    <string name="config_penUEventTarget" translatable="false">PEN_FRAMEWORK TYPE=TP</string>
     <bool name="config_penEarlyChangeActivity">false</bool>
 </resources>
