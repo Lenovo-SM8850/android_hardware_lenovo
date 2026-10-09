@@ -6,8 +6,6 @@
     <string name="app_name">Lenovo 펜</string>
     <string name="pen_notification_channel">펜 상태</string>
     <string name="pen_detected">Lenovo 펜 감지됨</string>
-    <string name="pen_battery_level">배터리: %1$d%%</string>
-    <string name="pen_battery_unknown">배터리 잔량을 확인할 수 없음</string>
     <string name="pen_pair_action">페어링</string>
     <string name="pen_pairing">페어링 중…</string>
     <string name="pen_paired">페어링됨</string>

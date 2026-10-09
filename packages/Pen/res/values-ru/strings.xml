@@ -6,8 +6,6 @@
     <string name="app_name">Стилус Lenovo</string>
     <string name="pen_notification_channel">Состояние стилуса</string>
     <string name="pen_detected">Обнаружен стилус Lenovo</string>
-    <string name="pen_battery_level">Заряд: %1$d%%</string>
-    <string name="pen_battery_unknown">Уровень заряда недоступен</string>
     <string name="pen_pair_action">Сопрячь</string>
     <string name="pen_pairing">Сопряжение…</string>
     <string name="pen_paired">Сопряжено</string>

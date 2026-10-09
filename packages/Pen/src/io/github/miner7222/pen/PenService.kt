@@ -339,8 +339,8 @@ class PenService : Service() {
             val device = adapter.getRemoteDevice(address)
             if (device.bondState == BluetoothDevice.BOND_BONDED) {
                 attemptedAddress = address
-                status = R.string.pen_paired
-                showNotification()
+                status = null
+                notifications.cancel(NOTIFICATION_ID)
                 return
             }
             attemptedAddress = address
@@ -427,14 +427,21 @@ class PenService : Service() {
 
     private fun showNotification() {
         val info = pen ?: return
+        // Bluetooth settings already show the battery; only pairing needs a notification.
+        val message = status
+        val canPair = info.bleSupported && info.address != null && !pairing &&
+            message != R.string.pen_paired && !isBonded(info.address)
+        if (message == null && !canPair) return
         try {
-            val battery = info.battery?.let { getString(R.string.pen_battery_level, it) }
-                ?: getString(R.string.pen_battery_unknown)
             val notification = Notification.Builder(this, CHANNEL)
                 .setSmallIcon(R.drawable.ic_stylus).setContentTitle(getString(R.string.pen_detected))
-                .setContentText(listOfNotNull(battery, status?.let { getString(it) }).joinToString(" · "))
                 .setOnlyAlertOnce(true)
-            if (info.bleSupported && info.address != null && !pairing && status != R.string.pen_paired) {
+            if (message != null) notification.setContentText(getString(message))
+            if (message == R.string.pen_paired) {
+                notification.setTimeoutAfter(PAIRED_NOTIFICATION_MS)
+                status = null
+            }
+            if (canPair) {
                 val action = PendingIntent.getService(this, 1,
                     Intent(this, PenService::class.java).setAction(ACTION_PAIR), PendingIntent.FLAG_IMMUTABLE)
                 notification.addAction(Notification.Action.Builder(null,
@@ -444,6 +451,12 @@ class PenService : Service() {
         } catch (e: RuntimeException) {
             Log.w(TAG, "Cannot post pen notification", e)
         }
+    }
+
+    private fun isBonded(address: String) = try {
+        bluetoothManager.adapter?.getRemoteDevice(address)?.bondState == BluetoothDevice.BOND_BONDED
+    } catch (e: RuntimeException) {
+        false
     }
 
     private fun endSession() {
@@ -471,7 +484,7 @@ class PenService : Service() {
     }
 
     private data class PenInfo(val identity: String, val vid: Int, val pid: Int,
-        val battery: Int?, val address: String?,
+        val address: String?,
         val bleSupported: Boolean, val identified: Boolean) {
         companion object {
             fun fromAdvertisement(data: ByteArray): PenInfo? {
@@ -483,14 +496,14 @@ class PenService : Service() {
                     "%02X".format(Locale.ROOT, data[it].toInt() and 0xff)
                 }
                 if (address == "00:00:00:00:00:00" || address == "FF:FF:FF:FF:FF:FF") return null
-                return PenInfo("ble:$address", 0x17ef, 0x617f, null, address, true, true)
+                return PenInfo("ble:$address", 0x17ef, 0x617f, address, true, true)
             }
 
             fun parse(info: String?, mac: String?): PenInfo? {
                 val fields = info?.split(';') ?: return null
                 if (fields.size != 5) return null
                 val type = fields[0].toIntOrNull()?.takeIf { it in 0..255 && it != 170 } ?: return null
-                val battery = fields[1].toIntOrNull()?.takeIf { it in 0..255 } ?: return null
+                fields[1].toIntOrNull()?.takeIf { it in 0..255 } ?: return null
                 val pid = fields[2].removePrefix("0x").toIntOrNull(16)?.takeIf { it in 0..65535 } ?: return null
                 val vid = fields[3].removePrefix("0x").toIntOrNull(16)?.takeIf { it in 0..65535 } ?: return null
                 val sn = fields[4].removePrefix("0x").toIntOrNull(16)?.takeIf { it in 0..0xffffff } ?: return null
@@ -507,8 +520,7 @@ class PenService : Service() {
                     6 -> pid == 0x622e
                     else -> false
                 }
-                return PenInfo("$type:$pid:$vid:$sn", vid, pid, battery.takeIf { it in 0..100 && type != 255 },
-                    address, supported, identified)
+                return PenInfo("$type:$pid:$vid:$sn", vid, pid, address, supported, identified)
             }
         }
     }
@@ -519,6 +531,7 @@ class PenService : Service() {
         private const val PEN_TYPE_PROPERTY = "sys.lenovo.pen.type"
         private const val PEN_IDLE_MS = 10000L
         private const val PAIR_TIMEOUT_MS = 30000L
+        private const val PAIRED_NOTIFICATION_MS = 5000L
         private const val CHANNEL = "LenovoPen"
         private const val NOTIFICATION_ID = 1000
         private const val ACTION_PAIR = "io.github.miner7222.pen.PAIR"

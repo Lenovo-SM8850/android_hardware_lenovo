@@ -6,8 +6,6 @@
     <string name="app_name">Lenovo 觸控筆</string>
     <string name="pen_notification_channel">觸控筆狀態</string>
     <string name="pen_detected">偵測到 Lenovo 觸控筆</string>
-    <string name="pen_battery_level">電量：%1$d%%</string>
-    <string name="pen_battery_unknown">無法取得電量</string>
     <string name="pen_pair_action">配對</string>
     <string name="pen_pairing">配對中…</string>
     <string name="pen_paired">已配對</string>
