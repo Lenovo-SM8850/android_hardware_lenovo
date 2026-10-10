@@ -1,0 +1,8 @@
+# SPDX-License-Identifier: Apache-2.0
+# The helper runs as system to satisfy the modem state node's root:system 0660 DAC.
+service vendor.lenovo.mcfg-restart /vendor/bin/vendor.lenovo.mcfg-restart
+    class hal
+    user system
+    group system
+    disabled
+    oneshot
