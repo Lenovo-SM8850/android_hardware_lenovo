@@ -3,10 +3,6 @@
 cc_library_shared {
     name: "libwfdaac.lenovo",
     vendor: true,
-    enabled: select(soong_config_variable("lenovo_audio", "source_wfd_aac"), {
-        true: true,
-        default: false,
-    }),
     srcs: [
         "aacEncode.cpp",
         "aacDecode.cpp",

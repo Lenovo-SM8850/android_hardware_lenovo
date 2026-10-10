@@ -4,10 +4,6 @@ cc_library_shared {
     name: "libaudioeffecthal.lenovo",
     vendor: true,
     relative_install_path: "hw",
-    enabled: select(soong_config_variable("lenovo_audio", "source_effects"), {
-        true: true,
-        default: false,
-    }),
     srcs: [
         "EffectConfig.cpp",
         "EffectFactory.cpp",
@@ -46,8 +42,4 @@ prebuilt_etc {
     src: "audioeffectservice_qti.xml",
     sub_dir: "vintf/manifest",
     vendor: true,
-    enabled: select(soong_config_variable("lenovo_audio", "source_effects"), {
-        true: true,
-        default: false,
-    }),
 }
