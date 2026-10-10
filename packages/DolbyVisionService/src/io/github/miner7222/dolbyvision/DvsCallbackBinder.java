@@ -19,6 +19,9 @@ final class DvsCallbackBinder extends IDvsCallback.Stub {
     // The daemon shares IDvs and callback hashes; the generated superset differs.
     private static final String BALDUR_HASH = "c37499ec236359f61c5c42109200921e04a8fdbc";
     private static final String WUJI_HASH = "9f3d7ea5005e33b60f86f3637fb4bd452d3186c6";
+    // Render notification suffixes; the daemon's prefixes vary between messages.
+    private static final String RENDER_START = "RenderStart";
+    private static final String RENDER_STOP = "RenderStop";
     private volatile String mInterfaceHash = BALDUR_HASH;
     private final Listener mListener;
 
@@ -57,6 +60,14 @@ final class DvsCallbackBinder extends IDvsCallback.Stub {
 
     @Override
     public void onDolbyNotification(String notification) {
-        // Acknowledge notifications; this app has no notification consumer.
+        // The wuji daemon reports rendering through notifications instead.
+        if (notification == null) {
+            return;
+        }
+        if (notification.endsWith(RENDER_START)) {
+            mListener.onPlaybackStart();
+        } else if (notification.endsWith(RENDER_STOP)) {
+            mListener.onPlaybackStop();
+        }
     }
 }
