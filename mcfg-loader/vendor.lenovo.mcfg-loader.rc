@@ -1,0 +1,8 @@
+# SPDX-License-Identifier: Apache-2.0
+service vendor.lenovo.mcfg-loader /vendor/bin/vendor.lenovo.mcfg-loader
+    class hal
+    user radio
+    group radio system
+    interface aidl vendor.lenovo.hardware.mcfg.IMcfgLoader/default
+    disabled
+    oneshot
