@@ -6,6 +6,7 @@
 
 #include <aidl/android/hardware/light/HwLightState.h>
 #include <android-base/unique_fd.h>
+#include <chrono>
 #include <cstdint>
 #include <vector>
 
@@ -19,9 +20,13 @@ class Aw22xxx {
     static bool isActive(const HwLightState& state);
 
   private:
+    bool shouldLogError();
     int writeRegister(uint8_t reg, uint8_t value);
+    int writePayload(std::vector<uint8_t> payload);
     ::android::base::unique_fd mRegFd;
     std::vector<uint8_t> mLastPayload;
+    std::chrono::steady_clock::time_point mNextErrorLog{};
+    bool mAvailable = false;
     bool mApplied = false;
 };
 

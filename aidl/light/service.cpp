@@ -24,7 +24,8 @@ int main() {
 
     ABinderProcess_setThreadPoolMaxThreadCount(0);
     auto lights = ndk::SharedRefBase::make<Lights>();
-    if (lights->initialize() != 0) return EXIT_FAILURE;
+    // Register the services even if the LED nodes are not ready yet.
+    lights->initialize();
 
     std::thread([lights, signals]() mutable {
         int signal;

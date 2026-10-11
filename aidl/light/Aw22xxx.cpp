@@ -37,31 +37,52 @@ bool Aw22xxx::isActive(const HwLightState& state) {
     return (state.color & 0x00ffffff) != 0 && (!isFlashing(state) || state.flashOnMs > 0);
 }
 
+bool Aw22xxx::shouldLogError() {
+    const auto now = std::chrono::steady_clock::now();
+    if (now < mNextErrorLog) return false;
+    mNextErrorLog = now + std::chrono::seconds(5);
+    return true;
+}
+
 int Aw22xxx::writeRegister(uint8_t reg, uint8_t value) {
     char pair[16];
     const int length = snprintf(pair, sizeof(pair), "%x %x\n", reg, value);
     const ssize_t written = TEMP_FAILURE_RETRY(write(mRegFd.get(), pair, length));
     if (written != length) {
         const int error = written < 0 ? errno : EIO;
-        LOG(ERROR) << "AW22xxx register " << static_cast<int>(reg) << ": " << strerror(error);
+        if (shouldLogError()) {
+            LOG(ERROR) << "AW22xxx register " << static_cast<int>(reg) << ": " << strerror(error);
+        }
+        mAvailable = false;
+        mApplied = false;
+        mRegFd.reset();
         return error;
     }
     return 0;
 }
 
 int Aw22xxx::initialize() {
+    mAvailable = false;
+    mApplied = false;
+    mRegFd.reset();
     if (!::android::base::WriteStringToFile("0\n", kEffectPath)) {
         const int error = errno;
-        PLOG(ERROR) << "Cannot clear AW22xxx effect";
+        if (shouldLogError()) {
+            LOG(ERROR) << "Cannot clear AW22xxx effect: " << strerror(error);
+        }
         return error;
     }
     mRegFd.reset(TEMP_FAILURE_RETRY(open(kRegPath, O_WRONLY | O_CLOEXEC)));
     if (mRegFd.get() < 0) {
         const int error = errno;
-        PLOG(ERROR) << "Cannot open AW22xxx registers";
+        if (shouldLogError()) {
+            LOG(ERROR) << "Cannot open AW22xxx registers: " << strerror(error);
+        }
         return error;
     }
-    return apply(HwLightState{});
+    const int error = writePayload({});
+    mAvailable = error == 0;
+    return error;
 }
 
 int Aw22xxx::apply(const HwLightState& state) {
@@ -79,6 +100,14 @@ int Aw22xxx::apply(const HwLightState& state) {
 }
 
 int Aw22xxx::applyPayload(std::vector<uint8_t> payload) {
+    if (!mAvailable) {
+        const int error = initialize();
+        if (error) return error;
+    }
+    return writePayload(std::move(payload));
+}
+
+int Aw22xxx::writePayload(std::vector<uint8_t> payload) {
     if (mApplied && payload == mLastPayload) return 0;
     mApplied = false;
 
