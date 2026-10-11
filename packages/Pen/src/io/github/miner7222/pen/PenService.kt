@@ -162,8 +162,10 @@ class PenService : Service() {
     override fun onCreate() {
         super.onCreate()
         cap.recover()
+        // Channel importance cannot be raised once created, so replace the old low channel
+        notifications.deleteNotificationChannel(LEGACY_CHANNEL)
         notifications.createNotificationChannel(NotificationChannel(CHANNEL,
-            getString(R.string.pen_notification_channel), NotificationManager.IMPORTANCE_LOW))
+            getString(R.string.pen_notification_channel), NotificationManager.IMPORTANCE_HIGH))
         registerReceiver(receiver, IntentFilter().apply {
             addAction(Intent.ACTION_SCREEN_ON)
             addAction(Intent.ACTION_SCREEN_OFF)
@@ -532,7 +534,8 @@ class PenService : Service() {
         private const val PEN_IDLE_MS = 10000L
         private const val PAIR_TIMEOUT_MS = 30000L
         private const val PAIRED_NOTIFICATION_MS = 5000L
-        private const val CHANNEL = "LenovoPen"
+        private const val CHANNEL = "LenovoPenAlerts"
+        private const val LEGACY_CHANNEL = "LenovoPen"
         private const val NOTIFICATION_ID = 1000
         private const val ACTION_PAIR = "io.github.miner7222.pen.PAIR"
     }
