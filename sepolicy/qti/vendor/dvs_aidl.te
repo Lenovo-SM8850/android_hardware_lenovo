@@ -5,6 +5,7 @@ type dvs_aidl_default_exec, exec_type, file_type, vendor_file_type;
 type dvs_aidl_service, hal_service_type, protected_service, service_manager_type;
 typeattribute system_app dvs_aidl_client;
 typeattribute platform_app dvs_aidl_client;
+typeattribute surfaceflinger dvs_aidl_client;
 
 binder_call(dvs_aidl_client, dvs_aidl_server)
 allow dvs_aidl_client dvs_aidl_service:service_manager { find };
