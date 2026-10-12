@@ -110,6 +110,7 @@ class PenService : Service() {
                     status = null
                 }
                 pen = info
+                if (info.bleSupported) setStylusMetadata(info.address, info.vid, info.pid)
                 // Identity/ready reports can arrive before the first routed MotionEvent.
                 markActivity()
                 showNotification()
@@ -137,6 +138,12 @@ class PenService : Service() {
                 }
                 BluetoothDevice.ACTION_BOND_STATE_CHANGED -> {
                     val device = intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE, BluetoothDevice::class.java)
+                    if (device?.bondState == BluetoothDevice.BOND_BONDED) {
+                        pen?.takeIf { it.bleSupported && it.address == device.address }?.let {
+                            setStylusMetadata(it.address, it.vid, it.pid)
+                        }
+                        updateConnectedStylusMetadata()
+                    }
                     if (device?.address != pairingAddress) return
                     when (intent.getIntExtra(BluetoothDevice.EXTRA_BOND_STATE, BluetoothDevice.ERROR)) {
                         BluetoothDevice.BOND_BONDED -> finishPairing(R.string.pen_paired)
@@ -251,6 +258,7 @@ class PenService : Service() {
 
     private fun checkPenDevice() {
         val devices = inputManager.inputDeviceIds.map { inputManager.getInputDevice(it) }.filterNotNull()
+        updateConnectedStylusMetadata(devices)
         // AP501U's BLE HID exposes mouse/consumer inputs, not SOURCE_STYLUS.
         // Stock enables TP pen mode on HID connection, before any NVT report.
         val device = devices.firstOrNull {
@@ -340,6 +348,9 @@ class PenService : Service() {
             }
             val device = adapter.getRemoteDevice(address)
             if (device.bondState == BluetoothDevice.BOND_BONDED) {
+                pen?.takeIf { it.address == address && it.bleSupported }?.let {
+                    setStylusMetadata(address, it.vid, it.pid)
+                }
                 attemptedAddress = address
                 status = null
                 notifications.cancel(NOTIFICATION_ID)
@@ -452,6 +463,36 @@ class PenService : Service() {
             notifications.notify(NOTIFICATION_ID, notification.build())
         } catch (e: RuntimeException) {
             Log.w(TAG, "Cannot post pen notification", e)
+        }
+    }
+
+    private fun isSupportedStylus(vid: Int, pid: Int) =
+        vid == 0x17ef && (pid == 0x617f || pid == 0x622e)
+
+    private fun updateConnectedStylusMetadata(devices: List<InputDevice> =
+        inputManager.inputDeviceIds.map { inputManager.getInputDevice(it) }.filterNotNull()) {
+        devices.filter { it.isExternal && !it.isVirtual && isSupportedStylus(it.vendorId, it.productId) }
+            .forEach {
+                try {
+                    setStylusMetadata(it.bluetoothAddress, it.vendorId, it.productId)
+                } catch (e: RuntimeException) {
+                    Log.w(TAG, "Cannot identify Bluetooth pen", e)
+                }
+            }
+    }
+
+    private fun setStylusMetadata(address: String?, vid: Int, pid: Int) {
+        if (address == null || !isSupportedStylus(vid, pid)) return
+        try {
+            val device = bluetoothManager.adapter?.getRemoteDevice(address) ?: return
+            if (device.bondState != BluetoothDevice.BOND_BONDED) return
+            val type = BluetoothDevice.DEVICE_TYPE_STYLUS.toByteArray(Charsets.UTF_8)
+            if (device.getMetadata(BluetoothDevice.METADATA_DEVICE_TYPE)?.contentEquals(type) == true) return
+            if (!device.setMetadata(BluetoothDevice.METADATA_DEVICE_TYPE, type)) {
+                Log.w(TAG, "Cannot set pen stylus metadata")
+            }
+        } catch (e: RuntimeException) {
+            Log.w(TAG, "Cannot set pen stylus metadata", e)
         }
     }
 
