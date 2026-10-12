@@ -10,7 +10,10 @@ android_app {
     platform_apis: true,
     system_ext_specific: true,
     privileged: true,
-    required: ["default-permissions_io.github.miner7222.pen"],
+    required: [
+        "default-permissions_io.github.miner7222.pen",
+        "privapp-permissions-io.github.miner7222.pen",
+    ],
     static_libs: [
         "vendor.lineage.touch-V1-java",
     ],
@@ -24,5 +27,13 @@ prebuilt_etc {
     system_ext_specific: true,
     src: "default-permissions_io.github.miner7222.pen.xml",
     sub_dir: "default-permissions",
+    filename_from_src: true,
+}
+
+prebuilt_etc {
+    name: "privapp-permissions-io.github.miner7222.pen",
+    system_ext_specific: true,
+    src: "privapp-permissions-io.github.miner7222.pen.xml",
+    sub_dir: "permissions",
     filename_from_src: true,
 }
