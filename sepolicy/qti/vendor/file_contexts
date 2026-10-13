@@ -17,3 +17,4 @@
 # Goodix capacitive fingerprint HAL.
 /vendor/bin/hw/android\.hardware\.biometrics\.fingerprint-service\.gfcap    u:object_r:hal_fingerprint_default_exec:s0
 /dev/goodix_fp    u:object_r:fingerprint_device:s0
+/vendor/bin/lenovo-cover                                  u:object_r:lenovo_cover_exec:s0
