@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 
-service wuji.thpd.recovery /system/bin/thpd-wuji-recovery
+service goodix.thpd.recovery /system/bin/thpd-goodix-recovery
     class core
     user root
     group root system input
@@ -16,4 +16,4 @@ on post-fs-data
     restorecon /dev/thp /dev/input_agent
     chmod 0600 /dev/thp
     chmod 0600 /dev/input_agent
-    start wuji.thpd.recovery
+    start goodix.thpd.recovery

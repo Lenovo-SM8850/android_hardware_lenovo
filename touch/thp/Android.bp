@@ -22,9 +22,9 @@ cc_binary {
 }
 
 cc_binary {
-    name: "thpd-wuji-recovery",
+    name: "thpd-goodix-recovery",
     recovery: true,
-    required: ["init.recovery.wuji-touch.rc"],
+    required: ["init.recovery.goodix-touch.rc"],
     compile_multilib: "64",
     srcs: ["main.cpp"],
     shared_libs: [
@@ -37,13 +37,13 @@ cc_binary {
         "-Wall",
         "-Wextra",
         "-Werror",
-        "-DTHPD_WUJI_RECOVERY",
+        "-DTHPD_RECOVERY",
     ],
 }
 
 prebuilt_etc {
-    name: "init.recovery.wuji-touch.rc",
-    src: "init.recovery.wuji-touch.rc",
+    name: "init.recovery.goodix-touch.rc",
+    src: "init.recovery.goodix-touch.rc",
     sub_dir: "init",
     recovery: true,
 }
