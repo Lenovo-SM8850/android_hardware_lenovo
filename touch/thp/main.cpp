@@ -74,14 +74,7 @@ bool panelIsOn() {
 }
 
 void syncScreenState() {
-    // Real panel blank/unblank owns controller suspend/resume in the kernel:
-    // Stock .text+0x2a04 arms gestures before type-5 off; 0x2acc resumes after on.
-    // This synthetic startup handshake only synchronizes TSC's screen bit.
-    // B810 alone returns immediately after AFE reinit: the kernel is already
-    // in normal mode. screen_state sends the same type-5 request as DRM work
-    // (stock gt9976n_thp_core: goodix_thp_screen_store, .text+0x5af4).
-    // TSC starts with its screen bit clear, so send off before the first on
-    // to run its normal TSA/AFE initialization, without changing the display.
+    // Synchronize TSC's initial screen bit before the normal DRM handshake.
     if (!panelIsOn()) {
         ALOGI("Panel is off; waiting for the normal DRM resume event");
         return;
@@ -132,9 +125,7 @@ void* runTsc(void* opaque) {
 }
 }  // namespace
 
-// Observe the existing stock handshake instead of guessing the startup delay.
-// Goodix supplies a third argument for every ioctl. Forward it unchanged and
-// signal only successful cmd101: TSC .text+0xbcc0 -> AFE .text+0xdaf8 -> B811.
+// Forward Goodix ioctl arguments and observe successful initialization.
 extern "C" __attribute__((visibility("default"))) int ioctl(int fd, int request, ...) {
     va_list args;
     va_start(args, request);
@@ -220,7 +211,6 @@ int main() {
     if (error != 0) {
         ALOGE("Cannot join THP worker: %s", strerror(error));
     }
-    // thp_exit is a stub in the analyzed TSC. Other blob threads may still run;
-    // keep their library and agent fd alive until process exit, then let init retry.
+    // Keep the library and agent fd alive until the remaining blob threads exit.
     return EXIT_FAILURE;
 }
