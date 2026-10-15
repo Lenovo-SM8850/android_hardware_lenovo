@@ -69,6 +69,7 @@ namespace android {
 namespace hardware {
 namespace usb {
 
+using ::android::base::EqualsIgnoreCase;
 using ::android::base::GetProperty;
 using ::android::base::ReadFileToString;
 using ::android::base::SetProperty;
@@ -737,7 +738,8 @@ ScopedAStatus Usb::enableContaminantPresenceDetection(
 }
 
 static bool hasLenovoDualPorts() {
-  return GetProperty("ro.product.manufacturer", "") == "Lenovo" &&
+  return EqualsIgnoreCase(GetProperty("ro.product.manufacturer", ""),
+                          "Lenovo") &&
          access("/sys/class/typec/port1", F_OK) == 0;
 }
 
