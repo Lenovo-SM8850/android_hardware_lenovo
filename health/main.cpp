@@ -9,7 +9,9 @@
 #include <android-base/logging.h>
 #include <android-base/parseint.h>
 #include <android-base/strings.h>
+#include <chrono>
 #include <ctime>
+#include <mutex>
 #include <android/binder_interface_utils.h>
 #include <cutils/klog.h>
 #include <cutils/properties.h>
@@ -166,22 +168,58 @@ class LenovoHealth final : public Health {
 
     ndk::ScopedAStatus getBatteryHealthData(
             aidl::android::hardware::health::BatteryHealthData* out) override {
+        std::lock_guard<std::mutex> lock(mHealthDataMutex);
+        return ReadBatteryHealthData(out);
+    }
+
+    void UpdateHealthInfo(aidl::android::hardware::health::HealthInfo* info) override {
+        std::lock_guard<std::mutex> lock(mHealthDataMutex);
+        const auto now = std::chrono::steady_clock::now();
+        if (!mHealthDataRead || now - mLastHealthDataRead >= std::chrono::hours(1)) {
+            mHealthDataRead = true;
+            mLastHealthDataRead = now;
+            aidl::android::hardware::health::BatteryHealthData data;
+            if (ReadBatteryHealthData(&data).isOk()) {
+                mCachedHealthData = std::move(data);
+                mHasCachedHealthData = true;
+            }
+        }
+        if (mHasCachedHealthData) {
+            UpdateBatteryDates(&mCachedHealthData);
+            info->batteryHealthData = mCachedHealthData;
+        }
+    }
+
+  private:
+    void UpdateBatteryDates(aidl::android::hardware::health::BatteryHealthData* out) {
+        if (mManufacturingDate == 0) {
+            mManufacturingDate = ReadBatteryDate("/sys/class/power_supply/battery/produce_date");
+        }
+        if (mFirstUsageDate == 0) {
+            mFirstUsageDate = ReadBatteryDate("/sys/class/power_supply/battery/activate_date");
+        }
+        out->batteryManufacturingDateSeconds = mManufacturingDate;
+        out->batteryFirstUsageSeconds = mFirstUsageDate;
+    }
+
+    ndk::ScopedAStatus ReadBatteryHealthData(
+            aidl::android::hardware::health::BatteryHealthData* out) {
         auto status = Health::getBatteryHealthData(out);
         if (!status.isOk()) return status;
-        out->batteryManufacturingDateSeconds =
-                ReadBatteryDate("/sys/class/power_supply/battery/produce_date");
-        out->batteryFirstUsageSeconds =
-                ReadBatteryDate("/sys/class/power_supply/battery/activate_date");
+        UpdateBatteryDates(out);
         if (out->batteryStateOfHealth < 0 || out->batteryStateOfHealth > 100) {
             out->batteryStateOfHealth = 0;
         }
         return status;
     }
 
-    void UpdateHealthInfo(aidl::android::hardware::health::HealthInfo* info) override {
-        aidl::android::hardware::health::BatteryHealthData data;
-        if (getBatteryHealthData(&data).isOk()) info->batteryHealthData = std::move(data);
-    }
+    std::mutex mHealthDataMutex;
+    int64_t mManufacturingDate = 0;
+    int64_t mFirstUsageDate = 0;
+    bool mHealthDataRead = false;
+    bool mHasCachedHealthData = false;
+    std::chrono::steady_clock::time_point mLastHealthDataRead;
+    aidl::android::hardware::health::BatteryHealthData mCachedHealthData;
 };
 
 }  // namespace
