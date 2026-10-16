@@ -522,6 +522,7 @@ class PenService : Service() {
         inputReceiver?.dispose()
         monitor?.dispose()
         endSession()
+        cap.destroy()
         handler.removeCallbacksAndMessages(null)
         super.onDestroy()
     }

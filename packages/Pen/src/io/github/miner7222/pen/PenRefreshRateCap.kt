@@ -6,23 +6,27 @@ package io.github.miner7222.pen
 import android.app.ActivityManager
 import android.content.Context
 import android.database.ContentObserver
+import android.hardware.display.DisplayManager
 import android.os.Handler
 import android.os.ServiceManager
 import android.os.UserHandle
 import android.provider.Settings
 import android.util.Log
+import android.view.Display
 import vendor.lineage.touch.IHighTouchPollingRate
 
-/** Like OplusPen, use Settings.System; journal exact nullable values before any write. */
 internal class PenRefreshRateCap(private val context: Context, private val handler: Handler) {
+    private val displayManager = context.getSystemService(DisplayManager::class.java)
     private val journal = context.createDeviceProtectedStorageContext()
         .getSharedPreferences("pen_refresh_restore", Context.MODE_PRIVATE)
     private val rate = context.getString(R.string.config_penSupportedRefreshRate).toFloatOrNull()
         ?.takeIf { it.isFinite() && it > 0f }
     private var user = -1
-    private var resolver = context.contentResolver
     private var active = false
     private var pollingActive = false
+    private var observing = false
+    private var lastRequestedRate = 0f
+    private var requestedRefresh = false
     private val enforce = object : Runnable {
         override fun run() {
             if (!active && !pollingActive) return
@@ -32,21 +36,30 @@ internal class PenRefreshRateCap(private val context: Context, private val handl
     }
     private val observer = object : ContentObserver(handler) {
         override fun onChange(selfChange: Boolean) {
-            if (active) apply()
+            if (active || pollingActive) applyRefresh()
         }
     }
 
     fun recover() {
+        if (!observing) {
+            context.contentResolver.registerContentObserver(
+                Settings.Secure.getUriFor(REFRESH_RATE_LIMIT), false, observer, UserHandle.USER_ALL)
+            observing = true
+        }
         if (journal.contains("user")) restore(journal.getInt("user", 0))
+    }
+
+    fun destroy() {
+        if (requestedRefresh) requestRefreshRate(0f, force = true)
+        release()
+        if (observing) context.contentResolver.unregisterContentObserver(observer)
+        observing = false
     }
 
     fun activate() {
         activatePolling()
         if (!pollingActive || active) return
         active = true
-        for (key in KEYS) {
-            resolver.registerContentObserver(Settings.System.getUriFor(key), false, observer)
-        }
         apply()
     }
 
@@ -57,52 +70,58 @@ internal class PenRefreshRateCap(private val context: Context, private val handl
             if (journal.contains("user")) return
         }
         user = ActivityManager.getCurrentUser()
-        resolver = context.createContextAsUser(UserHandle.of(user), 0).contentResolver
         pollingActive = true
         apply()
         handler.postDelayed(enforce, 1000)
     }
 
     fun releaseRefresh() {
-        if (active) resolver.unregisterContentObserver(observer)
         active = false
+        applyRefresh()
         if (journal.contains("user")) restore(journal.getInt("user", 0), refreshOnly = true)
     }
 
     fun release() {
         handler.removeCallbacks(enforce)
-        if (active) resolver.unregisterContentObserver(observer)
         active = false
         pollingActive = false
+        applyRefresh()
         if (journal.contains("user")) restore(journal.getInt("user", 0))
     }
 
     private fun pollingService(): IHighTouchPollingRate? = IHighTouchPollingRate.Stub.asInterface(
         ServiceManager.checkService(IHighTouchPollingRate.DESCRIPTOR + "/default"))
 
+    private fun applyRefresh() {
+        try {
+            val enabled = Settings.Secure.getIntForUser(context.contentResolver,
+                REFRESH_RATE_LIMIT, 1, ActivityManager.getCurrentUser()) != 0
+            requestRefreshRate(
+                if (active && enabled && ActivityManager.getCurrentUser() == user) rate ?: 0f else 0f)
+        } catch (e: Exception) {
+            Log.e(TAG, "Cannot apply pen refresh rate cap", e)
+        }
+    }
+
+    private fun requestRefreshRate(value: Float, force: Boolean = false) {
+        if (!force && value == lastRequestedRate) return
+        try {
+            displayManager.requestMaxRefreshRate(Display.DEFAULT_DISPLAY, value)
+            lastRequestedRate = value
+            requestedRefresh = true
+        } catch (e: Exception) {
+            Log.e(TAG, "Cannot apply pen refresh rate cap", e)
+        }
+    }
+
     private fun apply() {
-        val cap = rate ?: return
+        if (rate == null) return
         if (ActivityManager.getCurrentUser() != user) {
             release()
             return
         }
+        applyRefresh()
         try {
-            if (active) {
-                // MIN must also be bounded: DMD uses max(MIN, PEAK) for the peak vote.
-                for (key in listOf(Settings.System.MIN_REFRESH_RATE, Settings.System.PEAK_REFRESH_RATE)) {
-                    val raw = Settings.System.getString(resolver, key)
-                    val value = raw?.toFloatOrNull()
-                    val needsCap = if (key == Settings.System.PEAK_REFRESH_RATE) {
-                        value == null || !value.isFinite() || value == 0f || value > cap
-                    } else {
-                        value != null && (!value.isFinite() || value > cap)
-                    }
-                    updateSavedChoice(key, raw)
-                    if (needsCap && raw != cap.toString() && save(key, raw, cap.toString())) {
-                        check(Settings.System.putString(resolver, key, cap.toString()))
-                    }
-                }
-            }
             // Keep high polling disabled while the pen session remains ready.
             if (pollingActive) {
                 val polling = pollingService()
@@ -169,6 +188,7 @@ internal class PenRefreshRateCap(private val context: Context, private val handl
 
     companion object {
         private const val TAG = "LenovoPenRefreshRate"
-        private val KEYS = listOf(Settings.System.PEAK_REFRESH_RATE, Settings.System.MIN_REFRESH_RATE)
+        // The Settings stylus page writes this per-user switch.
+        private const val REFRESH_RATE_LIMIT = "pen_refresh_rate_limit"
     }
 }
