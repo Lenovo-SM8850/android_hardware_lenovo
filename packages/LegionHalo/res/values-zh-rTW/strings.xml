@@ -1,0 +1,31 @@
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
+<resources>
+    <string name="app_name">Legion Halo</string>
+    <string name="settings_summary">Legion Halo 顏色和效果</string>
+    <string name="enabled">使用 Legion Halo</string>
+    <string name="availability">螢幕開啟且省電模式關閉時顯示燈效。通知指示燈和電池指示燈優先顯示。</string>
+    <string name="effect">效果</string>
+    <string name="static_colour">單色</string>
+    <string name="breathing">呼吸</string>
+    <string name="rainbow">彩虹旋轉</string>
+    <string name="colour_cycle">顏色循環</string>
+    <string name="colours">顏色</string>
+    <string name="colours_help">請選擇顏色代碼。</string>
+    <string name="invalid_colours">請輸入六位十六進位 RGB 顏色代碼。</string>
+    <string name="speed">速度</string>
+    <string name="slow">慢</string>
+    <string name="normal">一般</string>
+    <string name="fast">快</string>
+    <string name="fixed_speed">彩虹旋轉使用固定速度。</string>
+    <string name="brightness">亮度</string>
+    <string name="paused">已暫停</string>
+    <string name="service_unavailable">燈光服務無法使用。正在重試…</string>
+    <string name="colour_number">顏色 %1$d</string>
+    <string name="reorder_colour">調整%1$s的順序</string>
+    <string name="move_up">上移</string>
+    <string name="move_down">下移</string>
+    <string name="hue">色相</string>
+    <string name="colour_code">顏色代碼</string>
+    <string name="saturation_value">飽和度 %1$d%%，明度 %2$d%%</string>
+</resources>
