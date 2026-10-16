@@ -6,8 +6,8 @@
     <!-- VID:PID (four hex digits each, no 0x) = decimal controller type after transPenType.
          Empty by default: unknown or device-unsupported identities keep the current type. -->
     <string-array name="config_penIdentityToControllerType" translatable="false" />
-    <!-- When true, report the Bluetooth pen connection through sys.lenovo.pen.support
-         for device init to enable the controller's pen mode. -->
+    <!-- When true, report disconnected/connected/linking as 0/1/2 through
+         sys.lenovo.pen.support for device init to control pen mode. -->
     <bool name="config_penSupportBridge">false</bool>
     <!-- Disabled unless a device overlay supplies its supported pen rate. -->
     <string name="config_penSupportedRefreshRate" translatable="false"></string>
