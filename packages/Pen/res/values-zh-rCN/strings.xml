@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+     SPDX-License-Identifier: Apache-2.0
+-->
+<resources>
+    <string name="app_name">Lenovo 触控笔</string>
+    <string name="pen_notification_channel">触控笔状态</string>
+    <string name="pen_detected">检测到 Lenovo 触控笔</string>
+    <string name="pen_pair_action">配对</string>
+    <string name="pen_pairing">正在配对…</string>
+    <string name="pen_paired">已配对</string>
+    <string name="pen_pair_failed">无法配对触控笔。请将触控笔靠近屏幕后重试。</string>
+    <string name="pen_bluetooth_off">请开启蓝牙以配对触控笔。</string>
+    <string name="pen_battery_low_title">触控笔电池电量低</string>
+    <string name="pen_battery_low">电量剩余 %1$d%%。请尽快为触控笔充电。</string>
+    <string name="pen_battery_critical">电量仅剩 %1$d%%。请立即为触控笔充电。</string>
+</resources>
