@@ -11,4 +11,7 @@
     <string name="pen_paired">Paired</string>
     <string name="pen_pair_failed">Couldn\'t pair the pen. Try again with the pen near the screen.</string>
     <string name="pen_bluetooth_off">Turn on Bluetooth to pair the pen.</string>
+    <string name="pen_battery_low_title">Pen battery low</string>
+    <string name="pen_battery_low">%1$d%% left. Charge the pen soon.</string>
+    <string name="pen_battery_critical">%1$d%% left. Charge the pen now.</string>
 </resources>
