@@ -9,7 +9,9 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
 import android.bluetooth.BluetoothDevice
+import android.bluetooth.BluetoothHidHost
 import android.bluetooth.BluetoothManager
+import android.bluetooth.BluetoothProfile
 import android.bluetooth.le.BluetoothLeScanner
 import android.bluetooth.le.ScanCallback
 import android.bluetooth.le.ScanFilter
@@ -75,6 +77,10 @@ class PenService : Service() {
     private var destroyed = false
     private var sessionActive = false
     private var connectedPen = false
+    private var hidHost: BluetoothHidHost? = null
+    private val connectedHidAddresses = mutableSetOf<String>()
+    private val reconnectTimeouts = mutableMapOf<String, Runnable>()
+    private var touchPairing = false
     private val release = Runnable {
         if (connectedPen && powerManager.isInteractive) {
             // Stock expires only the display request; keep the connected pen ready.
@@ -89,14 +95,42 @@ class PenService : Service() {
     private val pairingTimeout = Runnable { finishPairing(R.string.pen_pair_failed) }
     private val retryMonitor = Runnable { startInputMonitor() }
 
+    private val hidListener = object : BluetoothProfile.ServiceListener {
+        override fun onServiceConnected(profile: Int, proxy: BluetoothProfile) {
+            if (profile != BluetoothProfile.HID_HOST) return
+            if (destroyed) {
+                bluetoothManager.adapter?.closeProfileProxy(profile, proxy)
+                return
+            }
+            hidHost = proxy as BluetoothHidHost
+            try {
+                connectedHidAddresses.clear()
+                connectedHidAddresses.addAll(proxy.connectedDevices.filter { isKnownPen(it) }.map { it.address })
+                updatePenSupport()
+            } catch (e: RuntimeException) {
+                Log.w(TAG, "Cannot query pen HID connections", e)
+            }
+        }
+
+        override fun onServiceDisconnected(profile: Int) {
+            if (profile != BluetoothProfile.HID_HOST) return
+            connectedHidAddresses.clear()
+            stopReconnects()
+        }
+    }
+
     private val observer = object : UEventObserver() {
         override fun onUEvent(event: UEvent) {
             if (penDevPath.isEmpty() || penUEventTarget.isEmpty() ||
                 event.get("UEVENT_TO") != penUEventTarget ||
                 event.get("DEVPATH") != penDevPath || event.get("ACTION") != "change") return
-            val info = PenInfo.parse(event.get("INFO"), event.get("MAC")) ?: return
+            val address = PenInfo.parseAddress(event.get("MAC"))
+            val info = PenInfo.parse(event.get("INFO"), event.get("MAC"))
             handler.post {
                 if (destroyed) return@post
+                // A bonded pen can touch a dark screen before an identity report.
+                if (address != null) reconnectPen(address)
+                if (info == null) return@post
                 if (info.identified) selectPenType(info)
                 if (!powerManager.isInteractive) return@post
                 if (!info.identified) {
@@ -117,7 +151,7 @@ class PenService : Service() {
                 markActivity()
                 showNotification()
                 if (info.bleSupported && info.address != null && attemptedAddress != info.address) {
-                    pair(info.address)
+                    pair(info.address, fromTouch = true)
                 }
             }
         }
@@ -153,8 +187,30 @@ class PenService : Service() {
                         BluetoothDevice.BOND_NONE -> finishPairing(R.string.pen_pair_failed)
                     }
                 }
+                BluetoothHidHost.ACTION_CONNECTION_STATE_CHANGED -> {
+                    val device = intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE, BluetoothDevice::class.java)
+                        ?: return
+                    try {
+                        if (device.address !in connectedHidAddresses &&
+                            device.address !in reconnectTimeouts && !isKnownPen(device)) return
+                        when (intent.getIntExtra(BluetoothProfile.EXTRA_STATE, BluetoothProfile.STATE_DISCONNECTED)) {
+                            BluetoothProfile.STATE_CONNECTED -> {
+                                connectedHidAddresses.add(device.address)
+                                finishReconnect(device.address)
+                            }
+                            BluetoothProfile.STATE_DISCONNECTED -> {
+                                connectedHidAddresses.remove(device.address)
+                                finishReconnect(device.address)
+                            }
+                        }
+                    } catch (e: RuntimeException) {
+                        Log.w(TAG, "Cannot update pen HID connection", e)
+                    }
+                }
                 android.bluetooth.BluetoothAdapter.ACTION_STATE_CHANGED -> {
                     if (bluetoothManager.adapter?.isEnabled != true) {
+                        connectedHidAddresses.clear()
+                        stopReconnects()
                         stopPairing()
                         stopDiscovery()
                     } else {
@@ -182,14 +238,21 @@ class PenService : Service() {
             addAction(Intent.ACTION_SCREEN_OFF)
             addAction(Intent.ACTION_USER_SWITCHED)
             addAction(BluetoothDevice.ACTION_BOND_STATE_CHANGED)
+            addAction(BluetoothHidHost.ACTION_CONNECTION_STATE_CHANGED)
             addAction(android.bluetooth.BluetoothAdapter.ACTION_STATE_CHANGED)
         }, Context.RECEIVER_EXPORTED)
+        try {
+            bluetoothManager.adapter?.getProfileProxy(this, hidListener, BluetoothProfile.HID_HOST)
+        } catch (e: RuntimeException) {
+            Log.w(TAG, "Cannot obtain pen HID proxy", e)
+        }
         inputManager.registerInputDeviceListener(deviceListener, handler)
         if (penDevPath.isNotEmpty() && penUEventTarget.isNotEmpty()) {
             observer.startObserving("DEVPATH=$penDevPath")
         }
         startInputMonitor()
         checkPenDevice()
+        updatePenSupport()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -218,8 +281,13 @@ class PenService : Service() {
         }
     }
 
-    private fun reportPenSupport(connected: Boolean) {
-        val value = if (connected) "1" else "0"
+    private fun updatePenSupport() {
+        if (!penSupportBridge) return
+        val value = when {
+            connectedPen || connectedHidAddresses.isNotEmpty() -> "1"
+            touchPairing || reconnectTimeouts.isNotEmpty() -> "2"
+            else -> "0"
+        }
         try {
             if (SystemProperties.get(PEN_SUPPORT_PROPERTY) != value) {
                 SystemProperties.set(PEN_SUPPORT_PROPERTY, value)
@@ -227,6 +295,67 @@ class PenService : Service() {
         } catch (e: RuntimeException) {
             Log.w(TAG, "Cannot report pen support $value", e)
         }
+    }
+
+    private fun isKnownPen(device: BluetoothDevice): Boolean {
+        val type = BluetoothDevice.DEVICE_TYPE_STYLUS.toByteArray(Charsets.UTF_8)
+        return device.getMetadata(BluetoothDevice.METADATA_DEVICE_TYPE)?.contentEquals(type) == true ||
+            when (device.name) {
+                "Lenovo Tab Pen Plus" -> penTypes.containsKey(0x17ef to 0x617f)
+                "Lenovo Tab Pen Pro 2" -> penTypes.containsKey(0x17ef to 0x622e)
+                else -> false
+            }
+    }
+
+    private fun reconnectPen(address: String) {
+        try {
+            val adapter = bluetoothManager.adapter ?: return
+            if (!adapter.isEnabled) return
+            val device = adapter.getRemoteDevice(address)
+            if (device.bondState != BluetoothDevice.BOND_BONDED || !isKnownPen(device)) return
+            val host = hidHost ?: return
+            when (host.getConnectionState(device)) {
+                BluetoothProfile.STATE_CONNECTED -> {
+                    connectedHidAddresses.add(address)
+                    finishReconnect(address)
+                }
+                BluetoothProfile.STATE_DISCONNECTED -> {
+                    if (reconnectTimeouts.containsKey(address)) return
+                    connectedHidAddresses.remove(address)
+                    val timeout = Runnable {
+                        try {
+                            if (hidHost?.getConnectionState(device) == BluetoothProfile.STATE_CONNECTED) {
+                                connectedHidAddresses.add(address)
+                            }
+                        } catch (e: RuntimeException) {
+                            Log.w(TAG, "Cannot query pen reconnect result", e)
+                        }
+                        finishReconnect(address)
+                    }
+                    reconnectTimeouts[address] = timeout
+                    handler.postDelayed(timeout, RECONNECT_TIMEOUT_MS)
+                    updatePenSupport()
+                    // Allowing the policy also requests a connection when already allowed.
+                    if (!host.setConnectionPolicy(device, BluetoothProfile.CONNECTION_POLICY_ALLOWED)) {
+                        finishReconnect(address)
+                    }
+                }
+            }
+        } catch (e: RuntimeException) {
+            Log.w(TAG, "Cannot reconnect pen", e)
+            finishReconnect(address)
+        }
+    }
+
+    private fun finishReconnect(address: String) {
+        reconnectTimeouts.remove(address)?.let { handler.removeCallbacks(it) }
+        updatePenSupport()
+    }
+
+    private fun stopReconnects() {
+        reconnectTimeouts.values.forEach { handler.removeCallbacks(it) }
+        reconnectTimeouts.clear()
+        updatePenSupport()
     }
 
     private fun startInputMonitor() {
@@ -281,7 +410,7 @@ class PenService : Service() {
         }
         val wasConnected = connectedPen
         connectedPen = device != null
-        if (penSupportBridge && connectedPen != wasConnected) reportPenSupport(connectedPen)
+        if (connectedPen != wasConnected) updatePenSupport()
         if (device != null) {
             stopDiscovery()
             if (!wasConnected) Log.i(TAG, "Connected pen HID: ${device.name}")
@@ -352,7 +481,7 @@ class PenService : Service() {
         discoveryScanner = null
     }
 
-    private fun pair(address: String) {
+    private fun pair(address: String, fromTouch: Boolean = false) {
         if (pairing) return
         stopDiscovery()
         try {
@@ -375,6 +504,8 @@ class PenService : Service() {
             attemptedAddress = address
             pairingAddress = address
             pairing = true
+            touchPairing = fromTouch
+            updatePenSupport()
             status = R.string.pen_pairing
             handler.postDelayed(pairingTimeout, PAIR_TIMEOUT_MS)
             if (device.bondState == BluetoothDevice.BOND_BONDING) {
@@ -445,6 +576,8 @@ class PenService : Service() {
         handler.removeCallbacks(pairingTimeout)
         pairing = false
         pairingAddress = null
+        touchPairing = false
+        updatePenSupport()
     }
 
     private fun finishPairing(message: Int) {
@@ -539,6 +672,9 @@ class PenService : Service() {
         inputReceiver?.dispose()
         monitor?.dispose()
         endSession()
+        stopReconnects()
+        hidHost?.let { bluetoothManager.adapter?.closeProfileProxy(BluetoothProfile.HID_HOST, it) }
+        hidHost = null
         battery.destroy()
         cap.destroy()
         handler.removeCallbacksAndMessages(null)
@@ -549,6 +685,11 @@ class PenService : Service() {
         val address: String?,
         val bleSupported: Boolean, val identified: Boolean) {
         companion object {
+            fun parseAddress(mac: String?): String? = mac?.uppercase(Locale.ROOT)?.takeIf {
+                it.matches(Regex("(?:[0-9A-F]{2}:){5}[0-9A-F]{2}")) &&
+                    it != "00:00:00:00:00:00" && it != "FF:FF:FF:FF:FF:FF"
+            }
+
             fun fromAdvertisement(data: ByteArray): PenInfo? {
                 // The baldur stock ZuiUDevice: ZuiPairV2, Lenovo company 0x02c5,
                 // little-endian check code 0x908570 and Picasso device ID 1.
@@ -570,10 +711,7 @@ class PenService : Service() {
                 val vid = fields[3].removePrefix("0x").toIntOrNull(16)?.takeIf { it in 0..65535 } ?: return null
                 val sn = fields[4].removePrefix("0x").toIntOrNull(16)?.takeIf { it in 0..0xffffff } ?: return null
                 val identified = !(type == 255 && pid == 0xffff && vid == 0xffff && sn == 0x3fffff)
-                val address = mac?.uppercase(Locale.ROOT)?.takeIf {
-                    it.matches(Regex("(?:[0-9A-F]{2}:){5}[0-9A-F]{2}")) &&
-                        it != "00:00:00:00:00:00" && it != "FF:FF:FF:FF:FF:FF"
-                }
+                val address = parseAddress(mac)
                 // Exclude non-BLE Monet types (4/7/255).
                 val supported = vid == 0x17ef && when (type) {
                     1 -> pid == 0x612b
@@ -594,6 +732,7 @@ class PenService : Service() {
         private const val PEN_SUPPORT_PROPERTY = "sys.lenovo.pen.support"
         private const val PEN_IDLE_MS = 10000L
         private const val PAIR_TIMEOUT_MS = 30000L
+        private const val RECONNECT_TIMEOUT_MS = 15000L
         private const val PAIRED_NOTIFICATION_MS = 5000L
         private const val CHANNEL = "LenovoPenAlerts"
         private const val LEGACY_CHANNEL = "LenovoPen"
