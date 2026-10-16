@@ -60,6 +60,7 @@ class PenService : Service() {
     private val penDevPath by lazy { getString(R.string.config_penUEventDevPath) }
     private val penUEventTarget by lazy { getString(R.string.config_penUEventTarget) }
     private val earlyChangeActivity by lazy { resources.getBoolean(R.bool.config_penEarlyChangeActivity) }
+    private val penSupportBridge by lazy { resources.getBoolean(R.bool.config_penSupportBridge) }
     private var monitor: InputMonitor? = null
     private var inputReceiver: InputEventReceiver? = null
     private var scanner: BluetoothLeScanner? = null
@@ -217,6 +218,17 @@ class PenService : Service() {
         }
     }
 
+    private fun reportPenSupport(connected: Boolean) {
+        val value = if (connected) "1" else "0"
+        try {
+            if (SystemProperties.get(PEN_SUPPORT_PROPERTY) != value) {
+                SystemProperties.set(PEN_SUPPORT_PROPERTY, value)
+            }
+        } catch (e: RuntimeException) {
+            Log.w(TAG, "Cannot report pen support $value", e)
+        }
+    }
+
     private fun startInputMonitor() {
         if (destroyed || monitor != null) return
         try {
@@ -269,6 +281,7 @@ class PenService : Service() {
         }
         val wasConnected = connectedPen
         connectedPen = device != null
+        if (penSupportBridge && connectedPen != wasConnected) reportPenSupport(connectedPen)
         if (device != null) {
             stopDiscovery()
             if (!wasConnected) Log.i(TAG, "Connected pen HID: ${device.name}")
@@ -578,6 +591,7 @@ class PenService : Service() {
         private const val TAG = "LenovoPenService"
         private val PAIRING_UUID = ParcelUuid.fromString("0000f9ea-0000-1000-8000-00805f9b34fb")
         private const val PEN_TYPE_PROPERTY = "sys.lenovo.pen.type"
+        private const val PEN_SUPPORT_PROPERTY = "sys.lenovo.pen.support"
         private const val PEN_IDLE_MS = 10000L
         private const val PAIR_TIMEOUT_MS = 30000L
         private const val PAIRED_NOTIFICATION_MS = 5000L
