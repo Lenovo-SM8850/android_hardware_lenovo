@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+     SPDX-License-Identifier: Apache-2.0
+-->
+<resources>
+    <string name="app_name">Служба Dolby Vision</string>
+    <string name="notification_channel">Dolby</string>
+    <string name="notification_title">Выбор режима Dolby Vision</string>
+    <string name="notification_bright_mode">Dolby Vision яркий</string>
+    <string name="notification_vivid_mode">Dolby Vision насыщенный</string>
+    <string name="notification_dark_mode">Dolby Vision темный</string>
+    <string name="content_text_bright">Оптимизировано для ярких помещений</string>
+    <string name="content_text_vivid">Оптимизировано для насыщенного изображения с повышенной яркостью и усиленными цветами</string>
+    <string name="content_text_dark">Оптимизировано для просмотра фильмов в темных помещениях</string>
+    <string name="notification_bright">Яркий</string>
+    <string name="notification_vivid">Насыщенный</string>
+    <string name="notification_dark">Темный</string>
+</resources>
