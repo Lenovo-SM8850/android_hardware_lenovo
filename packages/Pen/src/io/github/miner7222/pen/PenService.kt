@@ -42,6 +42,7 @@ class PenService : Service() {
     private val notifications by lazy { getSystemService(NotificationManager::class.java) }
     private val powerManager by lazy { getSystemService(PowerManager::class.java) }
     private val cap by lazy { PenRefreshRateCap(this, handler) }
+    private val battery by lazy { PenBattery(this, handler) }
     private val penTypes by lazy {
         val format = Regex("([0-9A-Fa-f]{4}):([0-9A-Fa-f]{4})=([0-9]+)")
         resources.getStringArray(R.array.config_penIdentityToControllerType).mapNotNull { entry ->
@@ -134,6 +135,7 @@ class PenService : Service() {
                 Intent.ACTION_SCREEN_OFF -> endSession()
                 Intent.ACTION_USER_SWITCHED -> {
                     endSession()
+                    battery.onUserSwitched()
                     checkPenDevice()
                 }
                 BluetoothDevice.ACTION_BOND_STATE_CHANGED -> {
@@ -173,6 +175,7 @@ class PenService : Service() {
         notifications.deleteNotificationChannel(LEGACY_CHANNEL)
         notifications.createNotificationChannel(NotificationChannel(CHANNEL,
             getString(R.string.pen_notification_channel), NotificationManager.IMPORTANCE_HIGH))
+        battery.start()
         registerReceiver(receiver, IntentFilter().apply {
             addAction(Intent.ACTION_SCREEN_ON)
             addAction(Intent.ACTION_SCREEN_OFF)
@@ -471,6 +474,7 @@ class PenService : Service() {
 
     private fun updateConnectedStylusMetadata(devices: List<InputDevice> =
         inputManager.inputDeviceIds.map { inputManager.getInputDevice(it) }.filterNotNull()) {
+        battery.updateDevices(devices)
         devices.filter { it.isExternal && !it.isVirtual && isSupportedStylus(it.vendorId, it.productId) }
             .forEach {
                 try {
@@ -522,6 +526,7 @@ class PenService : Service() {
         inputReceiver?.dispose()
         monitor?.dispose()
         endSession()
+        battery.destroy()
         cap.destroy()
         handler.removeCallbacksAndMessages(null)
         super.onDestroy()
