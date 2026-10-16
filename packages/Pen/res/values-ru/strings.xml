@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+     SPDX-License-Identifier: Apache-2.0
+-->
+<resources>
+    <string name="app_name">Стилус Lenovo</string>
+    <string name="pen_notification_channel">Состояние стилуса</string>
+    <string name="pen_detected">Обнаружен стилус Lenovo</string>
+    <string name="pen_pair_action">Сопрячь</string>
+    <string name="pen_pairing">Сопряжение…</string>
+    <string name="pen_paired">Сопряжено</string>
+    <string name="pen_pair_failed">Не удалось сопрячь стилус. Повторите попытку, поднеся стилус к экрану.</string>
+    <string name="pen_bluetooth_off">Включите Bluetooth, чтобы сопрячь стилус.</string>
+    <string name="pen_battery_low_title">Низкий заряд батареи стилуса</string>
+    <string name="pen_battery_low">Осталось %1$d%% заряда. Поставьте стилус на зарядку.</string>
+    <string name="pen_battery_critical">Осталось всего %1$d%% заряда. Зарядите стилус прямо сейчас.</string>
+</resources>
