@@ -10,12 +10,7 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothDevice
-import android.bluetooth.BluetoothGatt
-import android.bluetooth.BluetoothGattCallback
-import android.bluetooth.BluetoothGattCharacteristic
-import android.bluetooth.BluetoothGattDescriptor
 import android.bluetooth.BluetoothManager
-import android.bluetooth.BluetoothProfile
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -28,10 +23,10 @@ import android.os.UserHandle
 import android.provider.Settings
 import android.util.Log
 import android.view.InputDevice
-import java.util.UUID
 import kotlin.math.roundToInt
 
-internal class PenBattery(private val context: Context, private val handler: Handler) {
+internal class PenBattery(private val context: Context, private val handler: Handler,
+    private val sessions: PenGattSessions) {
     private val inputManager = context.getSystemService(InputManager::class.java)
     private val adapter = context.getSystemService(BluetoothManager::class.java).adapter
     private val preferences = context.createDeviceProtectedStorageContext()
@@ -91,7 +86,9 @@ internal class PenBattery(private val context: Context, private val handler: Han
             if (address !in connected.values) pens.remove(address)?.close()
         }
         connected.entries.groupBy({ it.value }, { it.key }).forEach { (address, ids) ->
-            val pen = pens.getOrPut(address) { Pen(adapter!!.getRemoteDevice(address)) }
+            val pro2 = devices.any { it.id in ids && it.vendorId == PenHapticProtocol.VID &&
+                it.productId == PenHapticProtocol.PID }
+            val pen = pens.getOrPut(address) { Pen(adapter!!.getRemoteDevice(address), pro2) }
             pen.ids = ids
             ids.filter { it !in listeners }.forEach { id ->
                 val listener = InputManager.InputDeviceBatteryListener { _, _, state ->
@@ -154,19 +151,18 @@ internal class PenBattery(private val context: Context, private val handler: Han
         }
     }
 
-    private inner class Pen(val device: BluetoothDevice) {
+    private inner class Pen(val device: BluetoothDevice, private val pro2: Boolean) {
         var ids = emptyList<Int>()
         private val user = UserHandle.of(ActivityManager.getCurrentUser())
         private val userContext = context.createContextAsUser(user, 0)
         private val notifications = userContext.getSystemService(NotificationManager::class.java)
         private val connectedAt = SystemClock.uptimeMillis()
-        private var gatt: BluetoothGatt? = null
+        private val session = sessions.get(device)
         private var gattLevel: Int? = null
         private val publishedLevels = mutableSetOf<Int>()
         private var closed = false
         private var gattAttempted = false
         private val fallback = Runnable { refresh() }
-        private val gattTimeout = Runnable { closeGatt() }
 
         init {
             notifications.createNotificationChannel(NotificationChannel(CHANNEL,
@@ -210,67 +206,9 @@ internal class PenBattery(private val context: Context, private val handler: Han
 
         private fun connectGatt() {
             gattAttempted = true
-            gatt = device.connectGatt(context, false, callback, BluetoothDevice.TRANSPORT_LE)
-            handler.postDelayed(gattTimeout, GATT_TIMEOUT_MS)
-        }
-
-        private fun onGattEvent(client: BluetoothGatt, action: () -> Unit) {
-            handler.post {
-                if (closed || gatt !== client) return@post
-                try {
-                    action()
-                } catch (e: RuntimeException) {
-                    Log.w(TAG, "Cannot read pen GATT battery", e)
-                    closeGatt()
-                }
-            }
-        }
-
-        private val callback = object : BluetoothGattCallback() {
-            override fun onConnectionStateChange(client: BluetoothGatt, status: Int, newState: Int) {
-                onGattEvent(client) {
-                    if (status == BluetoothGatt.GATT_SUCCESS && newState == BluetoothProfile.STATE_CONNECTED) {
-                        if (!client.discoverServices()) closeGatt()
-                    } else if (status != BluetoothGatt.GATT_SUCCESS || newState == BluetoothProfile.STATE_DISCONNECTED) {
-                        closeGatt()
-                    }
-                }
-            }
-
-            override fun onServicesDiscovered(client: BluetoothGatt, status: Int) {
-                onGattEvent(client) {
-                    val characteristic = client.getService(BATTERY_SERVICE)?.getCharacteristic(BATTERY_LEVEL)
-                    if (status != BluetoothGatt.GATT_SUCCESS || characteristic == null ||
-                        !client.readCharacteristic(characteristic)) closeGatt()
-                }
-            }
-
-            override fun onCharacteristicRead(client: BluetoothGatt, characteristic: BluetoothGattCharacteristic,
-                value: ByteArray, status: Int) {
-                onGattEvent(client) {
-                    if (characteristic.uuid != BATTERY_LEVEL) return@onGattEvent
-                    if (status == BluetoothGatt.GATT_SUCCESS) acceptLevel(value)
-                    if (gatt !== client) return@onGattEvent
-                    val descriptor = characteristic.getDescriptor(CLIENT_CONFIGURATION)
-                    if (descriptor == null || !client.setCharacteristicNotification(characteristic, true) ||
-                        client.writeDescriptor(descriptor, BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE) != 0) {
-                        closeGatt()
-                    }
-                }
-            }
-
-            override fun onDescriptorWrite(client: BluetoothGatt, descriptor: BluetoothGattDescriptor, status: Int) {
-                onGattEvent(client) {
-                    if (status == BluetoothGatt.GATT_SUCCESS) handler.removeCallbacks(gattTimeout) else closeGatt()
-                }
-            }
-
-            override fun onCharacteristicChanged(client: BluetoothGatt, characteristic: BluetoothGattCharacteristic,
-                value: ByteArray) {
-                onGattEvent(client) {
-                    if (characteristic.uuid == BATTERY_LEVEL) acceptLevel(value)
-                }
-            }
+            session.batteryInterest({ value ->
+                handler.post { if (!closed) acceptLevel(value) }
+            }, pro2)
         }
 
         private fun acceptLevel(value: ByteArray) {
@@ -317,9 +255,7 @@ internal class PenBattery(private val context: Context, private val handler: Han
         private fun cancelNotification() = notifications.cancel(device.address, NOTIFICATION_ID)
 
         private fun closeGatt() {
-            handler.removeCallbacks(gattTimeout)
-            gatt?.close()
-            gatt = null
+            session.batteryInterest(null)
         }
 
         fun close() {
@@ -336,9 +272,5 @@ internal class PenBattery(private val context: Context, private val handler: Han
         private const val CHANNEL = "LenovoPenAlerts"
         private const val NOTIFICATION_ID = 1001
         private const val FALLBACK_DELAY_MS = 15000L
-        private const val GATT_TIMEOUT_MS = 15000L
-        private val BATTERY_SERVICE = UUID.fromString("0000180f-0000-1000-8000-00805f9b34fb")
-        private val BATTERY_LEVEL = UUID.fromString("00002a19-0000-1000-8000-00805f9b34fb")
-        private val CLIENT_CONFIGURATION = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
     }
 }
