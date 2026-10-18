@@ -3,3 +3,5 @@ get_prop(vendor_init, lenovo_pen_support_prop)
 
 # The support_pen node uses the shared touchscreen proc label.
 allow vendor_init proc_tp:file rw_file_perms;
+
+get_prop(vendor_init, lenovo_pen_haptics_prop)

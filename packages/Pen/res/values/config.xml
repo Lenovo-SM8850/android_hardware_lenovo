@@ -16,4 +16,5 @@
     <string name="config_penUEventDevPath" translatable="false"></string>
     <string name="config_penUEventTarget" translatable="false">PEN_FRAMEWORK TYPE=TP</string>
     <bool name="config_penEarlyChangeActivity">false</bool>
+    <bool name="config_penWritingHapticsSupported">false</bool>
 </resources>

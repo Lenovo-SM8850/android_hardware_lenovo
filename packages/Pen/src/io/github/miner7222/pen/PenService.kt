@@ -44,7 +44,9 @@ class PenService : Service() {
     private val notifications by lazy { getSystemService(NotificationManager::class.java) }
     private val powerManager by lazy { getSystemService(PowerManager::class.java) }
     private val cap by lazy { PenRefreshRateCap(this, handler) }
-    private val battery by lazy { PenBattery(this, handler) }
+    private val gattSessions by lazy { PenGattSessions(this) }
+    private val battery by lazy { PenBattery(this, handler, gattSessions) }
+    private val haptics by lazy { PenHapticController(this, handler, gattSessions) }
     private val penTypes by lazy {
         val format = Regex("([0-9A-Fa-f]{4}):([0-9A-Fa-f]{4})=([0-9]+)")
         resources.getStringArray(R.array.config_penIdentityToControllerType).mapNotNull { entry ->
@@ -112,6 +114,7 @@ class PenService : Service() {
             try {
                 connectedHidAddresses.clear()
                 connectedHidAddresses.addAll(proxy.connectedDevices.filter { isKnownPen(it) }.map { it.address })
+                connectedHidAddresses.forEach { haptics.connectionChanged(it, true) }
                 updatePenSupport()
             } catch (e: RuntimeException) {
                 Log.w(TAG, "Cannot query pen HID connections", e)
@@ -136,7 +139,10 @@ class PenService : Service() {
                 if (destroyed) return@post
                 // A bonded pen can touch a dark screen before an identity report.
                 if (address != null) reconnectPen(address)
+                // Timing/status events need not contain a valid identity report.
+                haptics.timingChanged()
                 if (info == null) return@post
+                haptics.touchIdentity(info.vid, info.pid, info.address, info.controllerType)
                 if (info.identified) selectPenType(info)
                 if (!powerManager.isInteractive) return@post
                 if (!info.identified) {
@@ -176,11 +182,14 @@ class PenService : Service() {
                 Intent.ACTION_SCREEN_OFF -> endSession()
                 Intent.ACTION_USER_SWITCHED -> {
                     endSession()
+                    haptics.userSwitched()
                     battery.onUserSwitched()
                     checkPenDevice()
                 }
                 BluetoothDevice.ACTION_BOND_STATE_CHANGED -> {
                     val device = intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE, BluetoothDevice::class.java)
+                    device?.let { haptics.connectionChanged(it.address,
+                        it.bondState == BluetoothDevice.BOND_BONDED) }
                     if (device?.bondState == BluetoothDevice.BOND_BONDED) {
                         pen?.takeIf { it.bleSupported && it.address == device.address }?.let {
                             setStylusMetadata(it.address, it.vid, it.pid)
@@ -208,11 +217,13 @@ class PenService : Service() {
                         when (intent.getIntExtra(BluetoothProfile.EXTRA_STATE, BluetoothProfile.STATE_DISCONNECTED)) {
                             BluetoothProfile.STATE_CONNECTED -> {
                                 connectedHidAddresses.add(device.address)
+                                haptics.connectionChanged(device.address, true)
                                 finishReconnect(device.address)
                                 if (pairing) finishPairing(R.string.pen_paired)
                             }
                             BluetoothProfile.STATE_DISCONNECTED -> {
                                 connectedHidAddresses.remove(device.address)
+                                haptics.connectionChanged(device.address, false)
                                 finishReconnect(device.address)
                             }
                         }
@@ -222,6 +233,7 @@ class PenService : Service() {
                 }
                 android.bluetooth.BluetoothAdapter.ACTION_STATE_CHANGED -> {
                     if (bluetoothManager.adapter?.isEnabled != true) {
+                        haptics.suspend("Bluetooth off")
                         connectedHidAddresses.clear()
                         stopReconnects()
                         if (pairing) finishPairing(R.string.pen_bluetooth_off) else stopPairing()
@@ -245,6 +257,7 @@ class PenService : Service() {
         notifications.deleteNotificationChannel(LEGACY_CHANNEL)
         notifications.createNotificationChannel(NotificationChannel(CHANNEL,
             getString(R.string.pen_notification_channel), NotificationManager.IMPORTANCE_HIGH))
+        haptics.start()
         battery.start()
         registerReceiver(receiver, IntentFilter().apply {
             addAction(Intent.ACTION_SCREEN_ON)
@@ -295,6 +308,9 @@ class PenService : Service() {
     }
 
     private fun updatePenSupport() {
+        haptics.updateDevices(inputManager.inputDeviceIds.map {
+            inputManager.getInputDevice(it)
+        }.filterNotNull(), connectedHidAddresses)
         if (!penSupportBridge) return
         val value = when {
             connectedPen || connectedHidAddresses.isNotEmpty() -> "1"
@@ -379,6 +395,7 @@ class PenService : Service() {
             inputReceiver = object : InputEventReceiver(newMonitor.inputChannel, mainLooper) {
                 override fun onInputEvent(event: InputEvent) {
                     try {
+                        if (event is MotionEvent) haptics.motion(event)
                         if (event is MotionEvent && inputName.isNotEmpty() && event.device?.name == inputName &&
                             event.isFromSource(InputDevice.SOURCE_STYLUS) && powerManager.isInteractive &&
                             event.actionMasked != MotionEvent.ACTION_CANCEL) {
@@ -393,7 +410,11 @@ class PenService : Service() {
                     consumeBatchedInputEvents(-1)
                 }
             }
+            haptics.updateDevices(inputManager.inputDeviceIds.map {
+                inputManager.getInputDevice(it)
+            }.filterNotNull(), connectedHidAddresses)
         } catch (e: RuntimeException) {
+            haptics.suspend("monitor disposed")
             inputReceiver?.dispose()
             inputReceiver = null
             monitor?.dispose()
@@ -648,6 +669,7 @@ class PenService : Service() {
     private fun updateConnectedStylusMetadata(devices: List<InputDevice> =
         inputManager.inputDeviceIds.map { inputManager.getInputDevice(it) }.filterNotNull()) {
         battery.updateDevices(devices)
+        haptics.updateDevices(devices, connectedHidAddresses)
         devices.filter { it.isExternal && !it.isVirtual && isSupportedStylus(it.vendorId, it.productId) }
             .forEach {
                 try {
@@ -680,6 +702,7 @@ class PenService : Service() {
     }
 
     private fun endSession() {
+        haptics.suspend("session ended")
         sessionActive = false
         handler.removeCallbacks(release)
         cap.release()
@@ -694,6 +717,7 @@ class PenService : Service() {
 
     override fun onDestroy() {
         destroyed = true
+        haptics.destroy()
         observer.stopObserving()
         inputManager.unregisterInputDeviceListener(deviceListener)
         unregisterReceiver(receiver)
@@ -704,6 +728,7 @@ class PenService : Service() {
         hidHost?.let { bluetoothManager.adapter?.closeProfileProxy(BluetoothProfile.HID_HOST, it) }
         hidHost = null
         battery.destroy()
+        gattSessions.destroy()
         cap.destroy()
         handler.removeCallbacksAndMessages(null)
         super.onDestroy()
@@ -711,7 +736,7 @@ class PenService : Service() {
 
     private data class PenInfo(val identity: String, val vid: Int, val pid: Int,
         val address: String?,
-        val bleSupported: Boolean, val identified: Boolean) {
+        val bleSupported: Boolean, val identified: Boolean, val controllerType: Int? = null) {
         companion object {
             fun parseAddress(mac: String?): String? = mac?.uppercase(Locale.ROOT)?.takeIf {
                 it.matches(Regex("(?:[0-9A-F]{2}:){5}[0-9A-F]{2}")) &&
@@ -748,7 +773,7 @@ class PenService : Service() {
                     6 -> pid == 0x622e
                     else -> false
                 }
-                return PenInfo("$type:$pid:$vid:$sn", vid, pid, address, supported, identified)
+                return PenInfo("$type:$pid:$vid:$sn", vid, pid, address, supported, identified, type)
             }
         }
     }
