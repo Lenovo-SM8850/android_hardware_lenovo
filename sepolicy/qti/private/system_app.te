@@ -4,3 +4,4 @@ allow system_app self:netlink_kobject_uevent_socket { create read setopt bind };
 # LenovoPen reports controller type and connection through init, never by writing proc nodes.
 set_prop(system_app, lenovo_pen_type_prop)
 set_prop(system_app, lenovo_pen_support_prop)
+set_prop(system_app, lenovo_pen_haptics_prop)

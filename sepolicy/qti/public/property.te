@@ -3,3 +3,6 @@ system_public_prop(lenovo_pen_type_prop)
 
 # System-owned LenovoPen connection, read by vendor init's property bridge.
 system_public_prop(lenovo_pen_support_prop)
+
+# System-owned writing haptic request, bridged by vendor init.
+system_public_prop(lenovo_pen_haptics_prop)
