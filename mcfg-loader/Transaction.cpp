@@ -50,6 +50,11 @@ Transaction::Transaction(ProfileStore& store, EfsTransport& efs, std::string dir
             status_.sourceName = journal_["source_name"].asString();
             status_.sourceSha256 = journal_["source_sha256"].asString();
             status_.enabled = journal_["enabled"].asBool();
+            // Legacy journals with prior use have already passed their first enable.
+            baselineReset_ = journal_.isMember("baselineReset")
+                                     ? journal_["baselineReset"].asBool()
+                                     : status_.enabled || !status_.profile.empty() ||
+                                               status_.state == "committed";
             status_.restartAttempted = journal_["restart_attempted"].asBool();
             status_.nextProfile = journal_["next_profile"].asString();
             status_.step = journal_["step"].asString();
@@ -81,6 +86,7 @@ Transaction::Transaction(ProfileStore& store, EfsTransport& efs, std::string dir
                                                "applying",
                                                "readback_verified",
                                                "restart_pending",
+                                               "baseline_restart_pending",
                                                "rechecking",
                                                "committed",
                                                "rolling_back",
@@ -100,9 +106,10 @@ Transaction::Transaction(ProfileStore& store, EfsTransport& efs, std::string dir
 }
 Transaction::~Transaction() = default;
 bool Transaction::pending() const {
-    // Recognize obsolete in-flight phases only to migrate interrupted journals.
+    // Keep mutation and restart phases pending until recovery or completion.
     return status_.state == "staged" || status_.state == "applying" ||
            status_.state == "readback_verified" || status_.state == "restart_pending" ||
+           status_.state == "baseline_restart_pending" ||
            status_.state == "rechecking" || status_.state == "rolling_back";
 }
 void Transaction::setState(const std::string& state) {
@@ -124,6 +131,7 @@ void Transaction::save() {
     journal_["source_sha256"] = status_.sourceSha256;
     journal_["token"] = status_.token;
     journal_["enabled"] = status_.enabled;
+    journal_["baselineReset"] = baselineReset_;
     journal_["restart_attempted"] = status_.restartAttempted;
     journal_["error"] = status_.error;
     journal_["updated_at_ms"] = Json::Int64(std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -154,7 +162,8 @@ Snapshot Transaction::snapshot(const std::set<std::string>& paths) {
 }
 int Transaction::autoselect(bool refresh) {
     // No EFS polling during our own restart, even if a stale lease says radio ON.
-    if (status_.state == "restart_pending" && status_.restartAttempted) return -1;
+    if ((status_.state == "restart_pending" || status_.state == "baseline_restart_pending") &&
+        status_.restartAttempted) return -1;
     if (!refresh && clock_() < autoselectUntil_) return autoselect_;
     autoselect_ = -1;
     try {
@@ -260,14 +269,14 @@ bool Transaction::committedSourceMatches(const std::string& profile) const {
            status_.sourceSha256 == metadata["source_sha256"].asString();
 }
 void Transaction::execute(const Snapshot& wanted, const std::string& profile,
-                          const std::string& token, const std::string& nextProfile) {
+                          const std::string& token, const std::string& nextProfile, bool baseline) {
     require(token.size() == 32 && token.find_first_not_of("0123456789abcdef") == std::string::npos,
             "transaction token");
     try {
         gate();
         status_.error.clear();
         status_.nextProfile = nextProfile;
-        status_.step = profile.empty() ? "restore" : "overlay";
+        status_.step = baseline ? "baseline" : (profile.empty() ? "restore" : "overlay");
         // Track a partially written overlay too. For 07, retain the old profile
         // until the write succeeds so an interrupted carrier reset retries 07.
         if (!profile.empty()) status_.profile = profile;
@@ -284,7 +293,7 @@ void Transaction::execute(const Snapshot& wanted, const std::string& profile,
         status_.sourceSha256 = metadata["source_sha256"].asString();
         setState("readback_verified");
         save();
-        setState("restart_pending");
+        setState(baseline ? "baseline_restart_pending" : "restart_pending");
         save();
     } catch (const std::exception& error) {
         fail(error.what());
@@ -304,6 +313,17 @@ void Transaction::apply(const std::vector<std::string>& homePlmns, const std::st
         }
         status_.modemVersion = modemVersion_();  // Diagnostics only, never an approval gate.
         gate();
+        if (!baselineReset_) {
+            // An interrupted 07 write still needs its restart, even if 07 is now present.
+            if (status_.step == "baseline" || autoselect(true) != 7) {
+                execute(Snapshot{{kControl, Bytes{7}}}, "", token, selection.profile, true);
+                return;
+            }
+            baselineReset_ = true;
+            // An already automatic modem also satisfies an import's initial reset.
+            if (status_.profile.empty()) status_.nextProfile = selection.profile;
+            save();
+        }
         if ((store_.metadata(selection.profile)["imported"].asBool() &&
                     status_.nextProfile != selection.profile) ||
             (!status_.profile.empty() && status_.profile != selection.profile) ||
@@ -327,7 +347,7 @@ void Transaction::restore(const std::string& token) {
     try {
         gate();
         // Explicit OFF or an unsupported/no SIM supersedes a pending overlay.
-        if (status_.state == "restart_pending") {
+        if (status_.state == "restart_pending" || status_.state == "baseline_restart_pending") {
             setState("disabled");
             status_.token.clear();
             save();
@@ -341,7 +361,8 @@ void Transaction::restore(const std::string& token) {
     }
 }
 bool Transaction::claimRestart(const std::string& token) {
-    require((status_.enabled || status_.profile.empty()) && status_.state == "restart_pending" &&
+    require((status_.enabled || status_.profile.empty()) &&
+                    (status_.state == "restart_pending" || status_.state == "baseline_restart_pending") &&
                     token == status_.token,
             "restart token/state");
     gate();
@@ -354,7 +375,8 @@ bool Transaction::claimRestart(const std::string& token) {
     return true;
 }
 void Transaction::resumeContext(const std::vector<std::string>& homePlmns) {
-    require((status_.enabled || status_.profile.empty()) && status_.state == "restart_pending",
+    require((status_.enabled || status_.profile.empty()) &&
+                    (status_.state == "restart_pending" || status_.state == "baseline_restart_pending"),
             "resume disabled/state");
     if (status_.profile.empty()) return;  // Restoring 07 is independent of carrier identity.
     const auto selection = store_.select(homePlmns);
@@ -363,7 +385,8 @@ void Transaction::resumeContext(const std::vector<std::string>& homePlmns) {
             "pending transaction identity conflict/changed");
 }
 void Transaction::complete(const std::string& token) {
-    require((status_.enabled || status_.profile.empty()) && status_.state == "restart_pending" &&
+    require((status_.enabled || status_.profile.empty()) &&
+                    (status_.state == "restart_pending" || status_.state == "baseline_restart_pending") &&
                     status_.restartAttempted && token == status_.token,
             "completion token/state");
     gate();
@@ -375,6 +398,7 @@ void Transaction::complete(const std::string& token) {
             wanted[kControl] = Bytes{0};
             verify(wanted);
         }
+        if (status_.state == "baseline_restart_pending") baselineReset_ = true;
         // Radio recovery completes the transaction. Do not re-read an overlay
         // from the bundled automatic MBN that Android may legitimately rewrite.
         status_.token.clear();
@@ -391,12 +415,13 @@ void Transaction::complete(const std::string& token) {
     }
 }
 void Transaction::recover() {
-    if (!pending() || status_.state == "restart_pending") return;
+    if (!pending() || status_.state == "restart_pending" ||
+        status_.state == "baseline_restart_pending") return;
     gate();
-    if (status_.state == "readback_verified" && status_.step == "restore" &&
-        !status_.nextProfile.empty()) {
+    if (status_.state == "readback_verified" &&
+        (status_.step == "restore" || status_.step == "baseline") && !status_.nextProfile.empty()) {
         // 07 was verified, but its restart must still precede the next overlay.
-        setState("restart_pending");
+        setState(status_.step == "baseline" ? "baseline_restart_pending" : "restart_pending");
         save();
         return;
     }

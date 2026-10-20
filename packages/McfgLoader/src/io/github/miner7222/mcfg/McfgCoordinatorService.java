@@ -414,7 +414,7 @@ public final class McfgCoordinatorService extends Service {
                     publish(status);
                 }
             }
-            if ("restart_pending".equals(status.state)) {
+            if (CoordinatorState.isRestartPending(status.state)) {
                 // Every transaction needs its existing token-claimed restart.
                 // Ignore the obsolete restart preference in older app settings.
                 if (enabled
@@ -557,7 +557,9 @@ public final class McfgCoordinatorService extends Service {
     private void publish(McfgStatus status) {
         lastStatus = status;
         String text = status.state + (status.profileId.isEmpty() ? "" : " — " + status.profileId);
-        if ("restart_pending".equals(status.state) && status.profileId.isEmpty())
+        if ("baseline_restart_pending".equals(status.state))
+            text += "\n" + getString(R.string.baseline_restart);
+        else if (CoordinatorState.isRestartPending(status.state) && status.profileId.isEmpty())
             text += "\n" + getString(R.string.normalizing);
         if (!status.firmwareGeneration.isEmpty())
             text += "\nFirmware: " + status.firmwareGeneration;
@@ -571,7 +573,7 @@ public final class McfgCoordinatorService extends Service {
             if (!status.sourceName.isEmpty()) text += "\n" + status.sourceName;
             if (!status.sourceSha256.isEmpty()) text += "\nSHA-256: " + status.sourceSha256;
         }
-        if ("restart_pending".equals(status.state))
+        if (CoordinatorState.isRestartPending(status.state))
             text += "\n" + prefs.getString("restart_note", "Waiting for a safe modem restart");
         if (!status.detail.isEmpty()) text += "\n" + status.detail;
         report(text);
