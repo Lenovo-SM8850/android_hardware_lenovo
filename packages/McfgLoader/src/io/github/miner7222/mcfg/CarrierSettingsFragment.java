@@ -188,14 +188,16 @@ public final class CarrierSettingsFragment extends SettingsBasePreferenceFragmen
         }
     }
 
-    /** Reduces durable loader state to Default, Applied (with a source path), or Error. */
+    /** Maps durable loader progress and applied sources to the status text. */
     private String statusText(McfgStatus loader) {
         String mapped = CoordinatorState.displayState(loader.state, loader.profileId,
                 loader.sourceName, loader.candidateProfileId,
                 prefs.getBoolean("automatic", false), loader.enabled);
         String text =
                 getString(
-                        "waiting".equals(mapped)
+                        "baseline".equals(mapped)
+                                ? R.string.baseline_restart
+                                : "waiting".equals(mapped)
                                 ? R.string.waiting
                                 : "error".equals(mapped)
                                 ? R.string.status_error
