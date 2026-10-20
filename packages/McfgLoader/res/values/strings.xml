@@ -1,5 +1,6 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 <resources>
+    <string name="baseline_restart">Restarting the modem to rebuild its baseline configuration</string>
     <string name="normalizing">Normalizing automatic modem selection</string>
     <string name="app_name">Carrier settings</string>
     <string name="automatic">Apply matching carrier profiles automatically</string>

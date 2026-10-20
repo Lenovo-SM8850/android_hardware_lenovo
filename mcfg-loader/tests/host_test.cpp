@@ -461,6 +461,7 @@ void transportRecoveryTests(ProfileStore& store, const std::string& scratch) {
     int64_t clock = 1;
     Transaction txn(store, efs, dir, [] { return "g1"; }, [] { return true; },
                     [] { return true; }, {}, [&] { return clock; });
+    txn.enable(true);
     const std::string token(32, 'a');
     txn.apply({"45006"}, token);
     txn.claimRestart(token);
@@ -718,12 +719,8 @@ void importedChoiceTests(const std::string& root, const std::string& scratch) {
     efs.files = base(store);
     efs.journal = directory + "/journal.json";
     Transaction txn(store, efs, directory, [] { return "g1"; }, [] { return true; }, [] { return true; });
+    txn.enable(true);
     const std::string token(32, 'a');
-    txn.apply({"45006"}, token);
-    check(efs.writes == 1 && efs.files.at(kControl) == std::optional<Bytes>(Bytes{7})
-                  && txn.status().profile.empty() && txn.status().nextProfile == first,
-          "first chosen import resets autoselect before any overlay write");
-    txn.claimRestart(token); txn.complete(token);
     txn.apply({"45006"}, token);
     check(txn.status().profile == first && txn.status().state == "restart_pending"
                   && efs.files.at(kControl) == std::optional<Bytes>(Bytes{0}),
@@ -832,6 +829,222 @@ void importedChoiceTests(const std::string& root, const std::string& scratch) {
                   == "imported/" + sha256(original), "reimport remains allowed at the cap");
     std::cout << "PASS: multiple imports per carrier, durable choice, reset/apply/readback, deletion fallback and legacy migration\n";
 }
+void baselineResetTests(ProfileStore& store, const std::string& scratch) {
+    const std::string token(32, 'd');
+    int scenario = 0;
+    const auto setup = [&] {
+        const auto dir = scratch + "/baseline-reset" + std::to_string(++scenario);
+        fs::create_directories(dir);
+        return dir;
+    };
+    const auto saved = [](const FakeEfs& efs) {
+        return parseJson(readFile(efs.journal, 40 * 1024 * 1024));
+    };
+    for (const int schema : {1, 2}) {
+        for (const int priorUse : {0, 1, 2, 3, 4}) {
+            const auto dir = setup();
+            FakeEfs efs;
+            efs.files = base(store);
+            efs.files[kControl] = Bytes{0};
+            efs.journal = dir + "/journal.json";
+            const std::string profile = "Korea/LGU/Commercial";
+            Json::Value legacy;
+            legacy["schema_version"] = schema;
+            legacy["enabled"] = priorUse == 1 || priorUse == 2;
+            legacy["profile"] = priorUse == 1 || priorUse == 3 ? profile : "";
+            legacy["state"] = priorUse == 1 || priorUse == 4 ? "committed"
+                                      : priorUse == 2 ? "waiting_for_identity" : "disabled";
+            if (priorUse == 1) {
+                const auto metadata = store.metadata(profile);
+                legacy["source_name"] = metadata["source_name"];
+                legacy["source_sha256"] = metadata["source_sha256"];
+            }
+            checksum(legacy);
+            durableWrite(efs.journal, legacy);
+            const auto before = readFile(efs.journal, 40 * 1024 * 1024);
+            Transaction txn(store, efs, dir, [] { return "g1"; }, [] { return true; }, [] { return true; });
+            check(efs.reads == 0 && readFile(efs.journal, 40 * 1024 * 1024) == before,
+                  "legacy baseline migration neither reads EFS nor saves during construction");
+            if (priorUse == 1) {
+                txn.apply({"45006"}, token);
+                check(efs.writes == 0 && txn.status().state == "committed",
+                      "legacy enabled committed profile remains a no-op after update");
+            }
+            txn.enable(true);
+            check(saved(efs)["baselineReset"].asBool() == (priorUse != 0),
+                  "next save persists baseline migration from legacy prior use");
+            txn.apply({"45006"}, token);
+            if (priorUse == 0) {
+                check(efs.writes == 1 && efs.files[kControl] == Bytes{7}
+                              && txn.status().state == "baseline_restart_pending"
+                              && !saved(efs)["baselineReset"].asBool(),
+                      "legacy disabled unused journal resets baseline on first enable");
+                txn.claimRestart(token);
+                txn.complete(token);
+                txn.apply({"45006"}, token);
+            } else {
+                for (const auto& write : efs.written)
+                    check(write != std::make_pair(std::string(kControl), Bytes{7}),
+                          "legacy prior use skips baseline 07 write and restart");
+            }
+            check(txn.status().state == "restart_pending" && txn.status().profile == profile
+                          && efs.files[kControl] == Bytes{0} && saved(efs)["baselineReset"].asBool(),
+                  "legacy migration continues through the normal overlay apply");
+        }
+    }
+    std::cout << "PASS: legacy prior-use journals skip baseline; disabled unused journals reset on first enable\n";
+    for (const auto& control : std::vector<std::optional<Bytes>>{
+                 Bytes{0}, Bytes{7}, Bytes{9}, Bytes{7, 0}, std::nullopt}) {
+        const auto dir = setup();
+        FakeEfs efs;
+        efs.files = base(store);
+        efs.journal = dir + "/journal.json";
+        {
+            Transaction txn(store, efs, dir, [] { return "g1"; }, [] { return true; }, [] { return true; });
+            check(!txn.status().enabled && txn.status().state == "disabled" && efs.reads == 0,
+                  "no journal defaults OFF without EFS access");
+            txn.evaluate({"45006"});
+            throws([&] { txn.apply({"45006"}, token); }, "fresh install cannot apply while disabled");
+            check(efs.writes == 0, "disabled fresh install never writes");
+            check(txn.autoselect() == 7, "prime automatic status cache");
+            efs.files[kControl] = control;
+            txn.enable(true);
+            check(efs.writes == 0, "enable waits for a safe supported apply context");
+            txn.apply({"45006"}, token);
+            if (control != std::optional<Bytes>(Bytes{7})) {
+                auto expected = base(store);
+                expected[kControl] = Bytes{7};
+                check(efs.files == expected && efs.writes == 1 && txn.status().profile.empty()
+                              && txn.status().state == "baseline_restart_pending"
+                              && !saved(efs)["baselineReset"].asBool(),
+                      "fresh control read writes only 07 before baseline restart");
+                throws([&] { txn.apply({"45006"}, token); }, "overlay waits for baseline recovery");
+                throws([&] { txn.complete(token); }, "baseline cannot complete without restart claim");
+                check(txn.claimRestart(token), "baseline requests existing modem restart path");
+                const int reads = efs.reads;
+                check(txn.autoselect(true) == -1 && efs.reads == reads,
+                      "baseline restart suppresses even refreshed EFS polling");
+                txn.resumeContext({"45006"});
+                txn.complete(token);
+                check(saved(efs)["baselineReset"].asBool(), "baseline done only after recovery");
+                txn.apply({"45006"}, token);
+            } else {
+                check(saved(efs)["baselineReset"].asBool(), "07 marks baseline done immediately");
+                for (const auto& write : efs.written)
+                    check(write != std::make_pair(std::string(kControl), Bytes{7}),
+                          "already 07 skips baseline write and restart");
+            }
+            check(txn.status().state == "restart_pending" && efs.files[kControl] == Bytes{0},
+                  "normal overlay ends with 00 and its normal restart");
+            for (const auto& [path, bytes] : store.load("Korea/LGU/Commercial"))
+                check(efs.files.at(path) == bytes, "baseline continuation verifies every profile item");
+            txn.claimRestart(token);
+            txn.complete(token);
+        }
+        {
+            Transaction txn(store, efs, dir, [] { return "g1"; }, [] { return true; }, [] { return true; });
+            check(txn.status().enabled, "journal retains saved ON choice");
+            txn.enable(false);
+            const int writes = efs.writes;
+            txn.enable(true);
+            txn.apply({"45006"}, token);
+            check(txn.status().state == "restart_pending" && efs.writes > writes
+                          && efs.written[writes] == std::make_pair(std::string(kControl), Bytes{0}),
+                  "second enable skips baseline even with control 00 after process restart");
+        }
+        {
+            Transaction txn(store, efs, dir, [] { return "g1"; }, [] { return true; }, [] { return true; });
+            txn.enable(false);
+        }
+        {
+            Transaction txn(store, efs, dir, [] { return "g1"; }, [] { return true; }, [] { return true; });
+            check(!txn.status().enabled, "journal retains saved OFF choice");
+        }
+    }
+    for (const std::string phase : {"staged", "applying", "readback_verified", "baseline_restart_pending"}) {
+        for (const bool claimed : {false, true}) {
+            if (claimed && phase != "baseline_restart_pending") continue;
+            const auto dir = setup();
+            FakeEfs efs;
+            efs.files = base(store);
+            efs.files[kControl] = Bytes{0};
+            efs.journal = dir + "/journal.json";
+            {
+                Transaction txn(store, efs, dir, [] { return "g1"; }, [] { return true; }, [] { return true; });
+                txn.enable(true);
+                txn.apply({"45006"}, token);
+                if (claimed) txn.claimRestart(token);
+            }
+            auto wal = saved(efs);
+            wal["state"] = phase;
+            checksum(wal);
+            durableWrite(efs.journal, wal);
+            {
+                Transaction txn(store, efs, dir, [] { return "g1"; }, [] { return true; }, [] { return true; });
+                const int writes = efs.writes;
+                txn.recover();
+                if (phase == "staged" || phase == "applying") {
+                    check(txn.status().state == "error", "partial baseline follows retry recovery");
+                    txn.enable(true);
+                    txn.apply({"45006"}, token);
+                    check(efs.writes == writes + 1, "interrupted 07 still retries reset before overlay");
+                } else
+                    check(efs.writes == writes, "verified baseline resumes without repeating 07");
+                check(txn.status().state == "baseline_restart_pending" && !saved(efs)["baselineReset"].asBool(),
+                      "baseline pending and unfinished flag survive crash");
+                txn.resumeContext({"45006"});
+                check(txn.claimRestart(token) == !claimed, "baseline restart claim is durable at most once");
+                txn.complete(token);
+                txn.apply({"45006"}, token);
+                check(txn.status().profile == "Korea/LGU/Commercial" && efs.files[kControl] == Bytes{0},
+                      "crashed baseline resumes profile only after restart completion");
+            }
+        }
+    }
+    for (const bool policyFailure : {false, true}) {
+        const auto dir = setup();
+        FakeEfs efs;
+        efs.files = base(store);
+        efs.files[kControl] = Bytes{0};
+        efs.journal = dir + "/journal.json";
+        bool allowed = false;
+        Transaction txn(store, efs, dir, [] { return "g1"; },
+                        [&] { return !policyFailure || allowed; }, [&] { return policyFailure || allowed; });
+        txn.enable(true);
+        throws([&] { txn.apply({"45006"}, token); }, "existing policy/safety gates baseline");
+        check(efs.writes == 0 && !saved(efs)["baselineReset"].asBool(), "gated baseline writes nothing");
+        allowed = true;
+        efs.failAt = 1;
+        throws([&] { txn.apply({"45006"}, token); }, "baseline write failure remains retryable");
+        check(txn.status().state == "error" && !saved(efs)["baselineReset"].asBool(),
+              "failed baseline never marks completion");
+        efs.failAt = -1;
+        txn.apply({"45006"}, token);
+        check(txn.status().state == "baseline_restart_pending", "baseline failure retries 07 restart");
+        txn.enable(false);
+        txn.restore(token);
+        check(!txn.status().enabled && txn.status().state == "restart_pending", "OFF supersedes baseline reset");
+    }
+    {
+        const auto dir = setup();
+        FakeEfs efs;
+        efs.files = base(store);
+        efs.files[kControl] = Bytes{0};
+        efs.journal = dir + "/journal.json";
+        Transaction txn(store, efs, dir, [] { return "g1"; }, [] { return true; }, [] { return true; });
+        txn.enable(true);
+        efs.afterWrite = [&](int) { efs.files[kControl] = Bytes{9}; };
+        throws([&] { txn.apply({"45006"}, token); }, "baseline 07 readback mismatch");
+        check(txn.status().state == "error" && efs.writes == 1 && !saved(efs)["baselineReset"].asBool(),
+              "baseline readback failure leaves completion unset");
+        throws([&] { txn.claimRestart(token); }, "unverified baseline cannot claim restart");
+        efs.afterWrite = {};
+        txn.apply({"45006"}, token);
+        check(txn.status().state == "baseline_restart_pending" && efs.files[kControl] == Bytes{7},
+              "baseline readback failure retries 07 and verification");
+    }
+    std::cout << "PASS: default OFF, first-enable baseline reset/07 skip, second enable and baseline crash recovery\n";
+}
 void controlRestartTests(ProfileStore& store, const std::string& scratch) {
     const std::string token(32, 'c');
     int scenario = 0;
@@ -851,10 +1064,19 @@ void controlRestartTests(ProfileStore& store, const std::string& scratch) {
         efs.files[kControl] = control;
         efs.journal = path + "/journal.json";
         Transaction txn(store, efs, path, [] { return "g1"; }, [] { return true; }, [] { return true; });
+        txn.enable(true);
         txn.apply({"45006"}, token);
+        if (control != std::optional<Bytes>(Bytes{7})) {
+            check(efs.writes == 1 && efs.written.front() == std::make_pair(std::string(kControl), Bytes{7})
+                          && txn.status().state == "baseline_restart_pending", "first enable resets baseline");
+            txn.claimRestart(token);
+            txn.complete(token);
+            efs.written.clear();
+            txn.apply({"45006"}, token);
+        }
         check(txn.status().profile == "Korea/LGU/Commercial" && txn.status().nextProfile.empty() &&
                       efs.written.front() == std::make_pair(std::string(kControl), Bytes{0}),
-              "unknown/foreign/automatic state applies profile directly without 07 normalization");
+              "profile applies after any required first-enable baseline reset");
         for (const auto& item : store.load("Korea/LGU/Commercial"))
             check(efs.files.at(item.first) == item.second, "every profile item is written");
         check(txn.claimRestart(token) && !txn.claimRestart(token), "at most one claim per token");
@@ -878,6 +1100,7 @@ void controlRestartTests(ProfileStore& store, const std::string& scratch) {
         efs.journal = path + "/journal.json";
         const auto foreign = efs.files;
         Transaction txn(store, efs, path, [] { return "g1"; }, [] { return true; }, [] { return true; });
+        txn.enable(true);
         txn.evaluate(homes);
         txn.restore(token);
         auto expected = foreign;
@@ -909,6 +1132,7 @@ void controlRestartTests(ProfileStore& store, const std::string& scratch) {
         durableWrite(efs.journal, old);
         bool safe = false, policy = true;
         Transaction txn(store, efs, path, [] { return "g2"; }, [&] { return policy; }, [&] { return safe; });
+        txn.enable(true);
         check(txn.status().profile == "Korea/LGU/Commercial" && efs.writes == 0,
               "old journal keeps profile without reading EFS/snapshots");
         const auto state = std::string(phase);
@@ -956,6 +1180,7 @@ void controlRestartTests(ProfileStore& store, const std::string& scratch) {
         checksum(old);
         durableWrite(efs.journal, old);
         Transaction txn(store, efs, path, [] { return "g1"; }, [] { return true; }, [] { return true; });
+        txn.enable(true);
         check(txn.status().state == "waiting_for_identity" && txn.status().token.empty(),
               "old normalization marker becomes idle");
         txn.apply({"45006"}, token);
@@ -968,6 +1193,7 @@ void controlRestartTests(ProfileStore& store, const std::string& scratch) {
         efs.journal = path + "/journal.json";
         {
             Transaction txn(store, efs, path, [] { return "g1"; }, [] { return true; }, [] { return true; });
+            txn.enable(true);
             txn.apply({"45006"}, token);
             txn.claimRestart(token);
             txn.complete(token);
@@ -979,6 +1205,7 @@ void controlRestartTests(ProfileStore& store, const std::string& scratch) {
         checksum(interrupted);
         durableWrite(efs.journal, interrupted);
         Transaction txn(store, efs, path, [] { return "g2"; }, [] { return true; }, [] { return true; });
+        txn.enable(true);
         const int writes = efs.writes;
         txn.recover();
         check(efs.writes == writes, "interrupted carrier reset never rolls back");
@@ -1000,6 +1227,7 @@ void controlRestartTests(ProfileStore& store, const std::string& scratch) {
     efs.journal = path + "/journal.json";
     {
         Transaction txn(store, efs, path, [] { return "g1"; }, [] { return true; }, [] { return true; });
+        txn.enable(true);
         txn.apply({"45006"}, token);
         txn.claimRestart(token);
         txn.complete(token);
@@ -1028,6 +1256,7 @@ void recoveryTests(ProfileStore& store, const std::string& scratch) {
     efs.journal = path + "/journal.json";
     {
         Transaction txn(store, efs, path, [] { return "g1"; }, [] { return true; }, [] { return true; });
+        txn.enable(true);
         txn.apply({"45006"}, std::string(32, 'a'));
     }
     const auto bytes = readFile(efs.journal, 40 * 1024 * 1024);
@@ -1168,6 +1397,7 @@ int main(int argc, char** argv) {
         managedPathTests(store, fixture, scratch);
         importedChoiceTests(fixture, scratch);
         recoveryTests(store, scratch);
+        baselineResetTests(store, scratch);
         controlRestartTests(store, scratch);
         const std::string token(32, 'a');
         int scenario = 0;
@@ -1184,6 +1414,7 @@ int main(int argc, char** argv) {
             {
                 Transaction txn(store, efs, dir, [] { return "g1"; },
                                 [] { return true; }, [] { return true; });
+                txn.enable(true);
                 txn.apply({"45006"}, token);
                 txn.claimRestart(token);
                 txn.complete(token);
@@ -1226,7 +1457,8 @@ int main(int argc, char** argv) {
             Transaction txn(
                     store, efs, dir, [&] { return generation; }, [&] { return policy; },
                     [&] { return safe; });
-            check(txn.status().enabled, "Automatic on from first boot");
+            check(!txn.status().enabled && txn.status().state == "disabled",
+                  "Automatic off from first boot");
             txn.enable(true);
             test(txn, efs, generation, policy, safe, dir);
         };
@@ -1388,9 +1620,15 @@ int main(int argc, char** argv) {
         run([&](auto& txn, auto& efs, auto&, auto&, auto&, const auto&) {
             efs.files[kControl] = Bytes{0};
             txn.apply({"45006"}, token);
-            check(efs.writes > 0, "foreign overlay applies directly without firmware approval");
+            check(efs.writes == 1 && txn.status().state == "baseline_restart_pending",
+                  "foreign overlay resets baseline without adding firmware approval");
         });
         run([&](auto& txn, auto& efs, auto&, auto&, auto&, const auto&) {
+            txn.apply({"45006"}, token);
+            txn.claimRestart(token);
+            txn.complete(token);
+            txn.enable(true);
+            efs.writes = 0;
             efs.parentMissing = true;
             throwsContaining([&] { txn.apply({"45006"}, token); },
                              {"step=mutate", "path=/", "injected missing parent", "errno=unknown"});
