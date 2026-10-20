@@ -116,6 +116,7 @@ final class CoordinatorState {
         if (!automatic && loaderEnabled) return "default";
         if ("error".equals(transactionState)) return "error";
         if (!automatic || !loaderEnabled) return "default";
+        if ("baseline_restart_pending".equals(transactionState)) return "baseline";
         if (candidateProfileId.isEmpty()) return "waiting";
         return shouldRecordApplied(transactionState, profileId, sourceName)
                         && candidateProfileId.equals(profileId)
@@ -135,15 +136,24 @@ final class CoordinatorState {
         return id >= 0 && slot >= 0 && id == mappedId && present;
     }
 
+    static boolean shouldMigrateAutomatic(boolean hasPreference, boolean loaderEnabled) {
+        return !hasPreference && loaderEnabled;
+    }
+
     static boolean shouldConfigureAutomatic(boolean enabled, boolean previousEnabled,
             boolean explicitRequest) {
         return enabled != previousEnabled || explicitRequest;
     }
 
+    static boolean isRestartPending(String transactionState) {
+        return "restart_pending".equals(transactionState)
+                || "baseline_restart_pending".equals(transactionState);
+    }
+
     static boolean shouldInitializeAutomatic(boolean loaderEnabled, long version, String transactionState,
             String profileId) {
         return (!loaderEnabled || version > 0)
-                && !("restart_pending".equals(transactionState) && profileId.isEmpty());
+                && !(isRestartPending(transactionState) && profileId.isEmpty());
     }
 
     synchronized boolean retryAllowed(long attemptedEpoch, long version, long now) {

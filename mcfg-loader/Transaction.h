@@ -7,9 +7,9 @@
 
 namespace mcfg {
 struct Status {
-    std::string state = "waiting_for_identity", profile, modemVersion, token, error, sourceName,
+    std::string state = "disabled", profile, modemVersion, token, error, sourceName,
                 sourceSha256, nextProfile, step;
-    bool enabled = true, restartAttempted = false;
+    bool enabled = false, restartAttempted = false;
 };
 class TransactionLock {
   public:
@@ -51,7 +51,7 @@ class Transaction {
     void verify(const Snapshot& wanted, const char* step = "readback");
     void mutate(const Snapshot& wanted);
     void execute(const Snapshot& wanted, const std::string& profile, const std::string& token,
-                 const std::string& nextProfile = "");
+                 const std::string& nextProfile = "", bool baseline = false);
     void save();
     void setState(const std::string& state);
     void gate(bool checkSafety = true);
@@ -63,6 +63,7 @@ class Transaction {
     std::function<std::string()> modemVersion_;
     std::function<bool()> safe_;
     std::function<int64_t()> clock_;
+    bool baselineReset_ = false;
     int autoselect_ = -1;
     int64_t autoselectUntil_ = 0;
     Status status_;

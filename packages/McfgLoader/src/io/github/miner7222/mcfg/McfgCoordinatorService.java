@@ -94,7 +94,7 @@ public final class McfgCoordinatorService extends Service {
         configVersion = prefs.getLong("config_version", 0);
         verifiedConfigVersion = prefs.getLong("verified_config_version", 0);
         bootId = readBootId();
-        automaticEnabled = prefs.getBoolean("automatic", true);
+        automaticEnabled = prefs.getBoolean("automatic", false);
         subscriptions = getSystemService(SubscriptionManager.class);
         subscriptions.addOnSubscriptionsChangedListener(getMainExecutor(), subListener);
         NotificationManager manager = getSystemService(NotificationManager.class);
@@ -130,7 +130,7 @@ public final class McfgCoordinatorService extends Service {
                     .commit();
             restoreRequested = true;
         }
-        boolean enabled = prefs.getBoolean("automatic", true);
+        boolean enabled = prefs.getBoolean("automatic", false);
         if (CoordinatorState.shouldConfigureAutomatic(enabled, automaticEnabled,
                 intent != null && (ENABLE.equals(intent.getAction())
                         || RESTORE.equals(intent.getAction())))) {
@@ -271,7 +271,7 @@ public final class McfgCoordinatorService extends Service {
             contextEpoch = state.epoch();
             // Revoke automatic leases immediately on removal, including queued
             // control-only completions/claims; explicit OFF can still use the radio.
-            contextSafe = CoordinatorState.shouldCoordinate(prefs.getBoolean("automatic", true), home.length);
+            contextSafe = CoordinatorState.shouldCoordinate(prefs.getBoolean("automatic", false), home.length);
             sendContext();
             if (!busy.getAndSet(true)) transactions.execute(this::coordinate);
             tickReady = true;
@@ -333,12 +333,18 @@ public final class McfgCoordinatorService extends Service {
         final String identity = state.identity();
         final int loadedSimCount = home.length;
         try {
-            boolean enabled = prefs.getBoolean("automatic", true);
+            boolean enabled = prefs.getBoolean("automatic", false);
             if (!CoordinatorState.shouldCoordinate(enabled, loadedSimCount)) return;
             if (!state.retryAllowed(epoch, version, SystemClock.elapsedRealtime())) return;
             connect();
             renewContext(epoch);
             McfgStatus status = worker.getStatus();
+            // Older installs may have saved ON only in the HAL journal.
+            if (CoordinatorState.shouldMigrateAutomatic(prefs.contains("automatic"), status.enabled)) {
+                prefs.edit().putBoolean("automatic", true).commit();
+                enabled = true;
+            }
+            if (!CoordinatorState.shouldCoordinate(enabled, loadedSimCount)) return;
             if (version != configVersion) return;
             // Recovery does not require a carrier candidate. Dispatch before
             // initialization or carrier selection starts a fresh attempt.
@@ -386,7 +392,7 @@ public final class McfgCoordinatorService extends Service {
                 publish(status);
             }
             if (enabled
-                    && prefs.getBoolean("automatic", true)
+                    && prefs.getBoolean("automatic", false)
                     && !prefs.getBoolean("disable_requested", false)
                     && !restoreRequested) {
                 if (!status.enabled
@@ -408,7 +414,7 @@ public final class McfgCoordinatorService extends Service {
                     publish(status);
                 }
             }
-            if ("restart_pending".equals(status.state)) {
+            if (CoordinatorState.isRestartPending(status.state)) {
                 // Every transaction needs its existing token-claimed restart.
                 // Ignore the obsolete restart preference in older app settings.
                 if (enabled
@@ -448,7 +454,7 @@ public final class McfgCoordinatorService extends Service {
                                             if (!contextSafe
                                                     || epoch != contextEpoch
                                                     || !CoordinatorState.shouldCoordinate(
-                                                            prefs.getBoolean("automatic", true), home.length)
+                                                            prefs.getBoolean("automatic", false), home.length)
                                                     || active == null) {
                                                 // Leave the token available until the identity is known.
                                                 return null;
@@ -551,7 +557,9 @@ public final class McfgCoordinatorService extends Service {
     private void publish(McfgStatus status) {
         lastStatus = status;
         String text = status.state + (status.profileId.isEmpty() ? "" : " — " + status.profileId);
-        if ("restart_pending".equals(status.state) && status.profileId.isEmpty())
+        if ("baseline_restart_pending".equals(status.state))
+            text += "\n" + getString(R.string.baseline_restart);
+        else if (CoordinatorState.isRestartPending(status.state) && status.profileId.isEmpty())
             text += "\n" + getString(R.string.normalizing);
         if (!status.firmwareGeneration.isEmpty())
             text += "\nFirmware: " + status.firmwareGeneration;
@@ -565,7 +573,7 @@ public final class McfgCoordinatorService extends Service {
             if (!status.sourceName.isEmpty()) text += "\n" + status.sourceName;
             if (!status.sourceSha256.isEmpty()) text += "\nSHA-256: " + status.sourceSha256;
         }
-        if ("restart_pending".equals(status.state))
+        if (CoordinatorState.isRestartPending(status.state))
             text += "\n" + prefs.getString("restart_note", "Waiting for a safe modem restart");
         if (!status.detail.isEmpty()) text += "\n" + status.detail;
         report(text);

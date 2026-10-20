@@ -64,6 +64,20 @@ public final class CoordinatorStateTest {
 
     public static void main(String[] args) {
         controlOnlyRestartChecks();
+        check(!CoordinatorState.shouldMigrateAutomatic(false, false)); // Fresh install stays OFF.
+        check(CoordinatorState.shouldMigrateAutomatic(false, true)); // Saved journal retains ON.
+        check(!CoordinatorState.shouldMigrateAutomatic(true, true)); // Explicit OFF takes precedence.
+        check(!CoordinatorState.shouldMigrateAutomatic(true, false)); // Explicit ON takes precedence.
+        check(CoordinatorState.isRestartPending("baseline_restart_pending"));
+        check(CoordinatorState.isRestartPending("restart_pending"));
+        check(!CoordinatorState.isRestartPending("committed"));
+        check(!CoordinatorState.shouldRecover("baseline_restart_pending", true, true));
+        check(!CoordinatorState.shouldInitializeAutomatic(false, 1, "baseline_restart_pending", ""));
+        check(CoordinatorState.displayState("baseline_restart_pending", "", "", "carrier", true, true)
+                .equals("baseline"));
+        check(CoordinatorState.displayState("baseline_restart_pending", "", "", "carrier", false, true)
+                .equals("default"));
+        check(!CoordinatorState.shouldRecordApplied("baseline_restart_pending", "", ""));
         final String kt = "Korea/KT/Commercial_KT_LTE";
         final String source = "generic/Korea/KT/Commercial_KT_LTE/mcfg_sw.mbn";
         CoordinatorState retry = new CoordinatorState();

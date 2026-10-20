@@ -81,7 +81,7 @@ public final class CarrierSettingsFragment extends SettingsBasePreferenceFragmen
                 public void run() {
                     if (!resumed || !attached()) return;
                     pollStatus();
-                    automatic.setChecked(prefs.getBoolean("automatic", true));
+                    automatic.setChecked(prefs.getBoolean("automatic", false));
                     overridesEntry.setEnabled(active());
                     updateImportActions();
                     main.postDelayed(this, 1000);
@@ -188,14 +188,16 @@ public final class CarrierSettingsFragment extends SettingsBasePreferenceFragmen
         }
     }
 
-    /** Reduces durable loader state to Default, Applied (with a source path), or Error. */
+    /** Maps durable loader progress and applied sources to the status text. */
     private String statusText(McfgStatus loader) {
         String mapped = CoordinatorState.displayState(loader.state, loader.profileId,
                 loader.sourceName, loader.candidateProfileId,
-                prefs.getBoolean("automatic", true), loader.enabled);
+                prefs.getBoolean("automatic", false), loader.enabled);
         String text =
                 getString(
-                        "waiting".equals(mapped)
+                        "baseline".equals(mapped)
+                                ? R.string.baseline_restart
+                                : "waiting".equals(mapped)
                                 ? R.string.waiting
                                 : "error".equals(mapped)
                                 ? R.string.status_error
@@ -253,7 +255,7 @@ public final class CarrierSettingsFragment extends SettingsBasePreferenceFragmen
         automatic = new MainSwitchPreference(requireContext());
         automatic.setTitle(R.string.automatic);
         automatic.setPersistent(false);
-        automatic.setChecked(prefs.getBoolean("automatic", true));
+        automatic.setChecked(prefs.getBoolean("automatic", false));
         automatic.setEnabled(UserHandle.myUserId() == UserHandle.USER_SYSTEM);
         automatic.setOnPreferenceChangeListener(
                 (p, value) -> {
@@ -346,7 +348,7 @@ public final class CarrierSettingsFragment extends SettingsBasePreferenceFragmen
             boolean applied = lastStatus != null && entry.id.equals(lastStatus.profileId)
                     && "applied".equals(CoordinatorState.displayState(lastStatus.state,
                             lastStatus.profileId, lastStatus.sourceName, lastStatus.candidateProfileId,
-                            prefs.getBoolean("automatic", true), lastStatus.enabled));
+                            prefs.getBoolean("automatic", false), lastStatus.enabled));
             row.getKey().setSummary(applied ? getString(R.string.import_applied_summary, entry.sourceSha256)
                     : chosen ? getString(R.string.import_chosen_summary, entry.sourceSha256)
                     : entry.sourceSha256);

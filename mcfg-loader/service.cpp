@@ -280,7 +280,8 @@ class Loader final : public ipc::BnMcfgLoader {
         // Unknown until a fresh coordinator lease permits opening DIAG. Reading
         // only the control cannot mistake an absent/malformed byte for automatic.
         if (safe_ && now() - lease_ < 5000 &&
-            !(s.state == "restart_pending" && s.restartAttempted) &&
+            !((s.state == "restart_pending" || s.state == "baseline_restart_pending") &&
+              s.restartAttempted) &&
             (transaction_ || now() >= autoselectRetryAt_)) {
             try {
                 // Also throttle cold-start HELLO failures before a Transaction exists.
