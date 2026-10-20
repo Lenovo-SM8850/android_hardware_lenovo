@@ -840,6 +840,59 @@ void baselineResetTests(ProfileStore& store, const std::string& scratch) {
     const auto saved = [](const FakeEfs& efs) {
         return parseJson(readFile(efs.journal, 40 * 1024 * 1024));
     };
+    for (const int schema : {1, 2}) {
+        for (const int priorUse : {0, 1, 2, 3, 4}) {
+            const auto dir = setup();
+            FakeEfs efs;
+            efs.files = base(store);
+            efs.files[kControl] = Bytes{0};
+            efs.journal = dir + "/journal.json";
+            const std::string profile = "Korea/LGU/Commercial";
+            Json::Value legacy;
+            legacy["schema_version"] = schema;
+            legacy["enabled"] = priorUse == 1 || priorUse == 2;
+            legacy["profile"] = priorUse == 1 || priorUse == 3 ? profile : "";
+            legacy["state"] = priorUse == 1 || priorUse == 4 ? "committed"
+                                      : priorUse == 2 ? "waiting_for_identity" : "disabled";
+            if (priorUse == 1) {
+                const auto metadata = store.metadata(profile);
+                legacy["source_name"] = metadata["source_name"];
+                legacy["source_sha256"] = metadata["source_sha256"];
+            }
+            checksum(legacy);
+            durableWrite(efs.journal, legacy);
+            const auto before = readFile(efs.journal, 40 * 1024 * 1024);
+            Transaction txn(store, efs, dir, [] { return "g1"; }, [] { return true; }, [] { return true; });
+            check(efs.reads == 0 && readFile(efs.journal, 40 * 1024 * 1024) == before,
+                  "legacy baseline migration neither reads EFS nor saves during construction");
+            if (priorUse == 1) {
+                txn.apply({"45006"}, token);
+                check(efs.writes == 0 && txn.status().state == "committed",
+                      "legacy enabled committed profile remains a no-op after update");
+            }
+            txn.enable(true);
+            check(saved(efs)["baselineReset"].asBool() == (priorUse != 0),
+                  "next save persists baseline migration from legacy prior use");
+            txn.apply({"45006"}, token);
+            if (priorUse == 0) {
+                check(efs.writes == 1 && efs.files[kControl] == Bytes{7}
+                              && txn.status().state == "baseline_restart_pending"
+                              && !saved(efs)["baselineReset"].asBool(),
+                      "legacy disabled unused journal resets baseline on first enable");
+                txn.claimRestart(token);
+                txn.complete(token);
+                txn.apply({"45006"}, token);
+            } else {
+                for (const auto& write : efs.written)
+                    check(write != std::make_pair(std::string(kControl), Bytes{7}),
+                          "legacy prior use skips baseline 07 write and restart");
+            }
+            check(txn.status().state == "restart_pending" && txn.status().profile == profile
+                          && efs.files[kControl] == Bytes{0} && saved(efs)["baselineReset"].asBool(),
+                  "legacy migration continues through the normal overlay apply");
+        }
+    }
+    std::cout << "PASS: legacy prior-use journals skip baseline; disabled unused journals reset on first enable\n";
     for (const auto& control : std::vector<std::optional<Bytes>>{
                  Bytes{0}, Bytes{7}, Bytes{9}, Bytes{7, 0}, std::nullopt}) {
         const auto dir = setup();
