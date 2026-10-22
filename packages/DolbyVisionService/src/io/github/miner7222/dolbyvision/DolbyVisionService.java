@@ -30,7 +30,9 @@ import com.android.internal.display.BrightnessSynchronizer;
 public class DolbyVisionService extends Service {
     static final String TAG = "LenovoDolbyVision";
 
-    private static final String PQ_CHANNEL_ID = "dolby_vision_picture_mode";
+    // Silent channels hide their status bar icon, so the channel alerts without sound or vibration.
+    private static final String PQ_CHANNEL_ID = "dolby_vision_status";
+    private static final String OLD_PQ_CHANNEL_ID = "dolby_vision_picture_mode";
     private static final int PQ_NOTIFICATION_ID = 1;
     private static final String ACTION_SET_PQ_MODE =
             "io.github.miner7222.dolbyvision.action.SET_PQ_MODE";
@@ -126,11 +128,17 @@ public class DolbyVisionService extends Service {
         mHandler = new Handler(mThread.getLooper());
         mDisplayManager = getSystemService(DisplayManager.class);
         mNotificationManager = getSystemService(NotificationManager.class);
-        mNotificationManager.createNotificationChannel(
+        mNotificationManager.deleteNotificationChannel(OLD_PQ_CHANNEL_ID);
+        final NotificationChannel channel =
                 new NotificationChannel(
                         PQ_CHANNEL_ID,
                         getString(R.string.notification_channel),
-                        NotificationManager.IMPORTANCE_LOW));
+                        NotificationManager.IMPORTANCE_DEFAULT);
+        channel.setSound(null, null);
+        channel.enableVibration(false);
+        channel.enableLights(false);
+        channel.setShowBadge(false);
+        mNotificationManager.createNotificationChannel(channel);
         registerReceiver(
                 mPqModeReceiver,
                 new IntentFilter(ACTION_SET_PQ_MODE),
