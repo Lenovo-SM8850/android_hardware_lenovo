@@ -3,6 +3,11 @@
 package io.github.miner7222.halo
 
 import android.os.Bundle
+import android.database.ContentObserver
+import android.os.Handler
+import android.os.Looper
+import android.os.UserHandle
+import android.provider.Settings
 import android.view.View
 import androidx.preference.PreferenceGroupAdapter
 import androidx.preference.PreferenceManager
@@ -10,6 +15,7 @@ import androidx.recyclerview.widget.ItemTouchHelper
 import androidx.recyclerview.widget.RecyclerView
 import androidx.preference.ListPreference
 import androidx.preference.PreferenceCategory
+import androidx.preference.SwitchPreferenceCompat
 import com.android.settingslib.collapsingtoolbar.CollapsingToolbarBaseActivity
 import com.android.settingslib.widget.FooterPreference
 import com.android.settingslib.widget.MainSwitchPreference
@@ -32,6 +38,12 @@ class SettingsFragment : SettingsBasePreferenceFragment() {
     private var dragging = false
     private var multipleColours = true
     private var touchHelper: ItemTouchHelper? = null
+    private lateinit var reactive: SwitchPreferenceCompat
+    private val reactiveObserver = object : ContentObserver(Handler(Looper.getMainLooper())) {
+        override fun onChange(selfChange: Boolean) {
+            reactive.isChecked = ReactiveSettings.enabled(requireContext())
+        }
+    }
     private val colourListener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
         if (key == "colours") updateColours()
     }
@@ -108,6 +120,29 @@ class SettingsFragment : SettingsBasePreferenceFragment() {
             setDefaultValue(128)
         }
         screen.addPreference(brightness)
+        reactive = SwitchPreferenceCompat(context).apply {
+            key = ReactiveSettings.ENABLED
+            isPersistent = false
+            setTitle(R.string.react_enabled)
+            isChecked = ReactiveSettings.enabled(context)
+            isEnabled = UserHandle.myUserId() == UserHandle.USER_SYSTEM
+            setOnPreferenceChangeListener { _, value ->
+                ReactiveSettings.setEnabled(context, value as Boolean)
+            }
+        }
+        screen.addPreference(reactive)
+        listOf(
+            "react_music" to R.string.react_music,
+            "react_games" to R.string.react_games,
+        ).forEach { (setting, title) ->
+            val option = SwitchPreferenceCompat(context).apply {
+                key = setting
+                setTitle(title)
+                setDefaultValue(true)
+            }
+            screen.addPreference(option)
+            option.dependency = ReactiveSettings.ENABLED
+        }
         screen.addPreference(FooterPreference(context).apply {
             title = getString(R.string.availability) + "\n\n" + getString(R.string.fixed_speed)
         })
@@ -186,11 +221,17 @@ class SettingsFragment : SettingsBasePreferenceFragment() {
 
     override fun onStart() {
         super.onStart()
+        requireContext().contentResolver.registerContentObserver(
+            Settings.Secure.getUriFor(ReactiveSettings.ENABLED), false,
+            reactiveObserver, UserHandle.USER_SYSTEM
+        )
+        reactive.isChecked = ReactiveSettings.enabled(requireContext())
         RingController.preferences.registerOnSharedPreferenceChangeListener(colourListener)
         updateColours()
     }
 
     override fun onStop() {
+        requireContext().contentResolver.unregisterContentObserver(reactiveObserver)
         RingController.preferences.unregisterOnSharedPreferenceChangeListener(colourListener)
         super.onStop()
     }

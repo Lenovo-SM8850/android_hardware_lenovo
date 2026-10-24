@@ -3,6 +3,10 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="io.github.miner7222.halo" android:sharedUserId="android.uid.system">
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission android:name="android.permission.WRITE_SECURE_SETTINGS" />
+    <uses-permission android:name="android.permission.INTERACT_ACROSS_USERS" />
+    <uses-permission android:name="android.permission.MANAGE_ACTIVITY_TASKS" />
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_ROUTING" />
     <application android:name=".LegionHaloApplication" android:label="@string/app_name"
         android:allowBackup="false" android:persistent="true" android:usesNonSdkApi="true"
         android:defaultToDeviceProtectedStorage="true" android:directBootAware="true">
