@@ -4,7 +4,7 @@
     <string name="app_name">Legion Halo</string>
     <string name="settings_summary">Legion Halo colors and effects</string>
     <string name="enabled">Use Legion Halo</string>
-    <string name="availability">Works with the screen on and Battery Saver off. Notifications and battery lights take priority.</string>
+    <string name="availability">Works with the screen on and Battery Saver off. Notifications and battery lights take priority. Rhythm uses the first colour.</string>
     <string name="effect">Effect</string>
     <string name="static_colour">Static colour</string>
     <string name="breathing">Breathing</string>
@@ -22,6 +22,7 @@
     <string name="react_enabled">React to music and games</string>
     <string name="react_music">Music</string>
     <string name="react_games">Games</string>
+    <string name="react_rhythm">Follow audio rhythm</string>
     <string name="paused">Paused</string>
     <string name="service_unavailable">Unavailable</string>
     <string name="colour_number">Color %1$d</string>
