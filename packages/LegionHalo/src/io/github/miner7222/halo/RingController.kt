@@ -2,6 +2,8 @@
 
 package io.github.miner7222.halo
 
+import android.Manifest
+import android.content.pm.PackageManager
 import android.app.ActivityManager
 import android.content.BroadcastReceiver
 import android.content.ComponentName
@@ -31,10 +33,12 @@ object RingController {
         private set
     private lateinit var handler: Handler
     private lateinit var session: ReactiveSession
+    private lateinit var pulses: AudioPulseWorker
     private var remote: ILightRing? = null
     private var binder: IBinder? = null
     private var lastEffect: String? = null
     private var scene = "idle"
+    private var outputMode: String? = null
     private var pulseLevel: Int? = null
     private var clearPending = false
     private var retryAt = 0L
@@ -61,6 +65,13 @@ object RingController {
         Settings.Secure.putIntForUser(context.contentResolver, ReactiveSettings.AVAILABLE,
             0, UserHandle.USER_SYSTEM)
         session = ReactiveSession(context, handler) { refresh() }
+        pulses = AudioPulseWorker(handler, { level ->
+            pulseLevel = level
+            apply()
+        }, {
+            pulseLevel = null
+            refresh()
+        })
         preferences.registerOnSharedPreferenceChangeListener(preferenceListener)
         context.contentResolver.registerContentObserver(
             Settings.Secure.getUriFor(ReactiveSettings.ENABLED), false,
@@ -116,20 +127,34 @@ object RingController {
         if (scene != nextScene) {
             Log.i("HaloReactive", "Scene $scene -> $nextScene")
             scene = nextScene
+            pulses.stop(resetFailure = true)
             pulseLevel = null
-            clearPending = true
         }
         val reactive = scene != "idle" && !session.failed
+        val audio = reactive && session.hasAudio(music, games) &&
+            preferences.getBoolean("react_rhythm", true) &&
+            context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
+        if (audio && SystemClock.uptimeMillis() >= retryAt) {
+            pulses.start()
+        } else {
+            pulses.stop(resetFailure = !reactive || !audio)
+            pulseLevel = null
+        }
+        if (!allowed || !ReactiveSettings.enabled(context)) {
+            pulses.stop(resetFailure = true)
+            pulseLevel = null
+        }
+
         val palette = parseColours(preferences.getString("colours", DEFAULT_COLOURS)!!)
             ?: parseColours(DEFAULT_COLOURS)!!
         val brightness = preferences.getInt("brightness", 128).coerceIn(0, 255)
         val effect = when {
             !allowed -> null
-            reactive -> Effect().apply {
-                type = if (pulseLevel != null) 0 else 2
-                colors = if (type == 0) intArrayOf(palette[0]) else palette
+            reactive && pulseLevel != null -> Effect().apply {
+                type = 0
+                colors = intArrayOf(palette[0])
                 speed = 1
-                this.brightness = if (type == 0) brightness * pulseLevel!! / 15 else brightness
+                this.brightness = brightness * pulseLevel!! / 15
             }
             enabled() -> Effect().apply {
                 type = preferences.getString("effect", "2")!!.toInt().coerceIn(0, 3)
@@ -137,7 +162,23 @@ object RingController {
                 speed = preferences.getString("speed", "1")!!.toInt().coerceIn(0, 2)
                 this.brightness = brightness
             }
+            reactive -> Effect().apply {
+                type = 2
+                colors = palette
+                speed = 1
+                this.brightness = brightness
+            }
             else -> null
+        }
+        val mode = when {
+            effect == null -> "off"
+            reactive && pulseLevel != null -> "$scene pulse"
+            reactive -> "$scene fallback ${effect.type}"
+            else -> "manual ${effect.type}"
+        }
+        if (outputMode != mode) {
+            Log.i("HaloReactive", "Output $outputMode -> $mode")
+            outputMode = mode
         }
         if (SystemClock.uptimeMillis() < retryAt) return
         try {
@@ -184,6 +225,7 @@ object RingController {
     }
 
     private fun disconnect() {
+        pulses.stop(resetFailure = true)
         session.pauseForHal()
         clearPending = true
         pulseLevel = null

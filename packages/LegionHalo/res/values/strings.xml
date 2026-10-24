@@ -5,7 +5,7 @@
     <string name="settings_summary">Legion Halo colors and effects</string>
     <string name="enabled">Use Legion Halo</string>
     <string name="description">Choose light colors and effects.</string>
-    <string name="availability">Works with the screen on and Battery Saver off. Notifications and battery lights take priority.</string>
+    <string name="availability">Works with the screen on and Battery Saver off. Notifications and battery lights take priority. Rhythm uses the first colour.</string>
     <string name="effect">Effect</string>
     <string name="static_colour">Static colour</string>
     <string name="breathing">Breathing</string>
@@ -26,6 +26,8 @@
     <string name="react_music">Music</string>
     <string name="react_games">Games</string>
     <string name="react_games_summary">Use light effects for games.</string>
+    <string name="react_rhythm">Follow audio rhythm</string>
+    <string name="react_rhythm_summary">Pulse with the audio rhythm.</string>
     <string name="paused">Paused</string>
     <string name="service_unavailable">Unavailable</string>
     <string name="colour_number">Color %1$d</string>

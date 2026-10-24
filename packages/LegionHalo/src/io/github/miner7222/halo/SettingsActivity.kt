@@ -139,11 +139,13 @@ class SettingsFragment : SettingsBasePreferenceFragment() {
         listOf(
             "react_music" to R.string.react_music,
             "react_games" to R.string.react_games,
+            "react_rhythm" to R.string.react_rhythm,
         ).forEach { (setting, title) ->
             val option = SwitchPreferenceCompat(context).apply {
                 key = setting
                 setTitle(title)
                 if (setting == "react_games") setSummary(R.string.react_games_summary)
+                if (setting == "react_rhythm") setSummary(R.string.react_rhythm_summary)
                 setDefaultValue(true)
             }
             screen.addPreference(option)
