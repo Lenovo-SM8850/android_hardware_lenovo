@@ -134,6 +134,7 @@ class SettingsFragment : SettingsBasePreferenceFragment() {
         listOf(
             "react_music" to R.string.react_music,
             "react_games" to R.string.react_games,
+            "react_rhythm" to R.string.react_rhythm,
         ).forEach { (setting, title) ->
             val option = SwitchPreferenceCompat(context).apply {
                 key = setting

@@ -8,6 +8,9 @@ binder_service(legionhalo_app)
 allow legionhalo_app app_api_service:service_manager find;
 allow legionhalo_app system_api_service:service_manager find;
 
+# Output-mix Visualizer uses AudioFlinger and audio policy, never an input device.
+allow legionhalo_app audioserver_service:service_manager find;
+
 allow legionhalo_app system_app_data_file:dir create_dir_perms;
 allow legionhalo_app system_app_data_file:{ file lnk_file } create_file_perms;
 
