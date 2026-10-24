@@ -8,10 +8,18 @@ android_app {
     platform_apis: true,
     system_ext_specific: true,
     privileged: true,
+    required: ["preinstalled-packages-lenovo.xml"],
     static_libs: [
         "vendor.lenovo.hardware.lightring-V1-java",
         "androidx.preference_preference",
         "SettingsLib",
     ],
     optimize: { enabled: false },
+}
+
+prebuilt_etc {
+    name: "preinstalled-packages-lenovo.xml",
+    src: "preinstalled-packages-lenovo.xml",
+    sub_dir: "sysconfig",
+    product_specific: true,
 }
