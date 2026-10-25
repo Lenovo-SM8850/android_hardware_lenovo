@@ -1,5 +1,9 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 <resources>
+    <string name="unsupported_carrier_title">Generic carrier profile in use</string>
+    <string name="unsupported_carrier_text">The modem has no profile for this carrier. Tap to set one up.</string>
+    <string name="unsupported_carrier_channel_name">Carrier profile suggestions</string>
+    <string name="unsupported_carrier_channel_description">Options for carriers without a built-in modem profile while automatic profiles are off.</string>
     <string name="baseline_restart">Restarting the modem to rebuild its baseline configuration</string>
     <string name="normalizing">Normalizing automatic modem selection</string>
     <string name="app_name">Carrier settings</string>

@@ -63,6 +63,33 @@ public final class CoordinatorStateTest {
     }
 
     public static void main(String[] args) {
+        check(CoordinatorState.shouldResetCarrierNotice(false, "99999:1", ""));
+        check(!CoordinatorState.shouldResetCarrierNotice(false, "99999:1", "99999:1"));
+        check(CoordinatorState.shouldResetCarrierNotice(false, "45008:1", "99999:1"));
+        check(CoordinatorState.shouldResetCarrierNotice(false, "99999:1", "45008:1"));
+        check(CoordinatorState.shouldResetCarrierNotice(true, "99999:1", "99999:1"));
+        check(CoordinatorState.shouldResetCarrierNotice(false, "99999:2", "99999:1"));
+        for (String operator : new String[] {"45502", "45507", "46000", "46001", "46002",
+                "46003", "46004", "46005", "46006", "46007", "46008", "46009", "46011",
+                "46012", "46013", "46015", "46030", "46059"}) {
+            check(!CoordinatorState.shouldNotifyUnsupported(false, operator + ":1:1", ""));
+            check(!CoordinatorState.shouldNotifyUnsupported(true, operator + ":1:1", ""));
+        }
+        for (String operator : new String[] {"45008", "45006", "45005", "310260", "99999",
+                "46010", "46014", "45501"}) {
+            String identity = operator + ":1890:1890";
+            check(CoordinatorState.shouldNotifyUnsupported(false, identity, ""));
+            check(!CoordinatorState.shouldNotifyUnsupported(true, identity, ""));
+            check(!CoordinatorState.shouldNotifyUnsupported(false, identity, identity));
+        }
+        for (String identity : new String[] {"", ":1890:1890", "no_sim", "4500:1:1", "abcde:1:1"})
+            check(!CoordinatorState.shouldNotifyUnsupported(false, identity, ""));
+        // KT has a donor match, but stock has no KT profile even when native status is disabled.
+        check(CoordinatorState.shouldNotifyUnsupported(false, "45008:1890:1890", "45006:1892:1892"));
+        check(!CoordinatorState.shouldNotifyUnsupported(false, "45008:1890:1890", "45008:1890:1890"));
+        check(CoordinatorState.shouldNotifyUnsupported(false, "45008:1890:1891", "45008:1890:1890"));
+        check(CoordinatorState.shouldNotifyUnsupported(false, "45008:1891:1891", "45008:1890:1891"));
+        check(CoordinatorState.shouldResetCarrierNotice(false, "46000:1:1", "45008:1890:1890"));
         controlOnlyRestartChecks();
         check(!CoordinatorState.shouldMigrateAutomatic(false, false)); // Fresh install stays OFF.
         check(CoordinatorState.shouldMigrateAutomatic(false, true)); // Saved journal retains ON.

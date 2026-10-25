@@ -459,7 +459,7 @@ void transportRecoveryTests(ProfileStore& store, const std::string& scratch) {
                        [&] { return contextFresh.load(); });
     EfsClient efs(diag, store.paths(), false);
     int64_t clock = 1;
-    Transaction txn(store, efs, dir, [] { return "g1"; }, [] { return true; },
+    Transaction txn(store, efs, dir, [] { return "g1"; },
                     [] { return true; }, {}, [&] { return clock; });
     txn.enable(true);
     const std::string token(32, 'a');
@@ -718,7 +718,7 @@ void importedChoiceTests(const std::string& root, const std::string& scratch) {
     FakeEfs efs;
     efs.files = base(store);
     efs.journal = directory + "/journal.json";
-    Transaction txn(store, efs, directory, [] { return "g1"; }, [] { return true; }, [] { return true; });
+    Transaction txn(store, efs, directory, [] { return "g1"; }, [] { return true; });
     txn.enable(true);
     const std::string token(32, 'a');
     txn.apply({"45006"}, token);
@@ -862,7 +862,7 @@ void baselineResetTests(ProfileStore& store, const std::string& scratch) {
             checksum(legacy);
             durableWrite(efs.journal, legacy);
             const auto before = readFile(efs.journal, 40 * 1024 * 1024);
-            Transaction txn(store, efs, dir, [] { return "g1"; }, [] { return true; }, [] { return true; });
+            Transaction txn(store, efs, dir, [] { return "g1"; }, [] { return true; });
             check(efs.reads == 0 && readFile(efs.journal, 40 * 1024 * 1024) == before,
                   "legacy baseline migration neither reads EFS nor saves during construction");
             if (priorUse == 1) {
@@ -900,7 +900,7 @@ void baselineResetTests(ProfileStore& store, const std::string& scratch) {
         efs.files = base(store);
         efs.journal = dir + "/journal.json";
         {
-            Transaction txn(store, efs, dir, [] { return "g1"; }, [] { return true; }, [] { return true; });
+            Transaction txn(store, efs, dir, [] { return "g1"; }, [] { return true; });
             check(!txn.status().enabled && txn.status().state == "disabled" && efs.reads == 0,
                   "no journal defaults OFF without EFS access");
             txn.evaluate({"45006"});
@@ -942,7 +942,7 @@ void baselineResetTests(ProfileStore& store, const std::string& scratch) {
             txn.complete(token);
         }
         {
-            Transaction txn(store, efs, dir, [] { return "g1"; }, [] { return true; }, [] { return true; });
+            Transaction txn(store, efs, dir, [] { return "g1"; }, [] { return true; });
             check(txn.status().enabled, "journal retains saved ON choice");
             txn.enable(false);
             const int writes = efs.writes;
@@ -953,11 +953,11 @@ void baselineResetTests(ProfileStore& store, const std::string& scratch) {
                   "second enable skips baseline even with control 00 after process restart");
         }
         {
-            Transaction txn(store, efs, dir, [] { return "g1"; }, [] { return true; }, [] { return true; });
+            Transaction txn(store, efs, dir, [] { return "g1"; }, [] { return true; });
             txn.enable(false);
         }
         {
-            Transaction txn(store, efs, dir, [] { return "g1"; }, [] { return true; }, [] { return true; });
+            Transaction txn(store, efs, dir, [] { return "g1"; }, [] { return true; });
             check(!txn.status().enabled, "journal retains saved OFF choice");
         }
     }
@@ -970,7 +970,7 @@ void baselineResetTests(ProfileStore& store, const std::string& scratch) {
             efs.files[kControl] = Bytes{0};
             efs.journal = dir + "/journal.json";
             {
-                Transaction txn(store, efs, dir, [] { return "g1"; }, [] { return true; }, [] { return true; });
+                Transaction txn(store, efs, dir, [] { return "g1"; }, [] { return true; });
                 txn.enable(true);
                 txn.apply({"45006"}, token);
                 if (claimed) txn.claimRestart(token);
@@ -980,7 +980,7 @@ void baselineResetTests(ProfileStore& store, const std::string& scratch) {
             checksum(wal);
             durableWrite(efs.journal, wal);
             {
-                Transaction txn(store, efs, dir, [] { return "g1"; }, [] { return true; }, [] { return true; });
+                Transaction txn(store, efs, dir, [] { return "g1"; }, [] { return true; });
                 const int writes = efs.writes;
                 txn.recover();
                 if (phase == "staged" || phase == "applying") {
@@ -1001,7 +1001,7 @@ void baselineResetTests(ProfileStore& store, const std::string& scratch) {
             }
         }
     }
-    for (const bool policyFailure : {false, true}) {
+    {
         const auto dir = setup();
         FakeEfs efs;
         efs.files = base(store);
@@ -1009,9 +1009,9 @@ void baselineResetTests(ProfileStore& store, const std::string& scratch) {
         efs.journal = dir + "/journal.json";
         bool allowed = false;
         Transaction txn(store, efs, dir, [] { return "g1"; },
-                        [&] { return !policyFailure || allowed; }, [&] { return policyFailure || allowed; });
+                        [&] { return allowed; });
         txn.enable(true);
-        throws([&] { txn.apply({"45006"}, token); }, "existing policy/safety gates baseline");
+        throws([&] { txn.apply({"45006"}, token); }, "existing safety gates baseline");
         check(efs.writes == 0 && !saved(efs)["baselineReset"].asBool(), "gated baseline writes nothing");
         allowed = true;
         efs.failAt = 1;
@@ -1031,7 +1031,7 @@ void baselineResetTests(ProfileStore& store, const std::string& scratch) {
         efs.files = base(store);
         efs.files[kControl] = Bytes{0};
         efs.journal = dir + "/journal.json";
-        Transaction txn(store, efs, dir, [] { return "g1"; }, [] { return true; }, [] { return true; });
+        Transaction txn(store, efs, dir, [] { return "g1"; }, [] { return true; });
         txn.enable(true);
         efs.afterWrite = [&](int) { efs.files[kControl] = Bytes{9}; };
         throws([&] { txn.apply({"45006"}, token); }, "baseline 07 readback mismatch");
@@ -1063,7 +1063,7 @@ void controlRestartTests(ProfileStore& store, const std::string& scratch) {
         efs.files = base(store);
         efs.files[kControl] = control;
         efs.journal = path + "/journal.json";
-        Transaction txn(store, efs, path, [] { return "g1"; }, [] { return true; }, [] { return true; });
+        Transaction txn(store, efs, path, [] { return "g1"; }, [] { return true; });
         txn.enable(true);
         txn.apply({"45006"}, token);
         if (control != std::optional<Bytes>(Bytes{7})) {
@@ -1099,7 +1099,7 @@ void controlRestartTests(ProfileStore& store, const std::string& scratch) {
         efs.files[kControl] = Bytes{0};
         efs.journal = path + "/journal.json";
         const auto foreign = efs.files;
-        Transaction txn(store, efs, path, [] { return "g1"; }, [] { return true; }, [] { return true; });
+        Transaction txn(store, efs, path, [] { return "g1"; }, [] { return true; });
         txn.enable(true);
         txn.evaluate(homes);
         txn.restore(token);
@@ -1130,8 +1130,8 @@ void controlRestartTests(ProfileStore& store, const std::string& scratch) {
         for (const auto& name : {"baseline", "before", "wanted", "managed"}) old[name] = "obsolete";
         checksum(old);
         durableWrite(efs.journal, old);
-        bool safe = false, policy = true;
-        Transaction txn(store, efs, path, [] { return "g2"; }, [&] { return policy; }, [&] { return safe; });
+        bool safe = false;
+        Transaction txn(store, efs, path, [] { return "g2"; }, [&] { return safe; });
         txn.enable(true);
         check(txn.status().profile == "Korea/LGU/Commercial" && efs.writes == 0,
               "old journal keeps profile without reading EFS/snapshots");
@@ -1139,9 +1139,6 @@ void controlRestartTests(ProfileStore& store, const std::string& scratch) {
         if (state == "staged" || state == "applying" || state == "readback_verified" || state == "rolling_back") {
             throws([&] { txn.recover(); }, "unsafe recovery is deferred");
             safe = true;
-            policy = false;
-            throws([&] { txn.recover(); }, "write policy still gates recovery");
-            policy = true;
             txn.recover();
             check(txn.status().state == "error" && efs.writes == 0,
                   "interrupted legacy phases recover without rollback");
@@ -1179,7 +1176,7 @@ void controlRestartTests(ProfileStore& store, const std::string& scratch) {
         old["before"] = Json::Value();
         checksum(old);
         durableWrite(efs.journal, old);
-        Transaction txn(store, efs, path, [] { return "g1"; }, [] { return true; }, [] { return true; });
+        Transaction txn(store, efs, path, [] { return "g1"; }, [] { return true; });
         txn.enable(true);
         check(txn.status().state == "waiting_for_identity" && txn.status().token.empty(),
               "old normalization marker becomes idle");
@@ -1192,7 +1189,7 @@ void controlRestartTests(ProfileStore& store, const std::string& scratch) {
         efs.files = base(store);
         efs.journal = path + "/journal.json";
         {
-            Transaction txn(store, efs, path, [] { return "g1"; }, [] { return true; }, [] { return true; });
+            Transaction txn(store, efs, path, [] { return "g1"; }, [] { return true; });
             txn.enable(true);
             txn.apply({"45006"}, token);
             txn.claimRestart(token);
@@ -1204,7 +1201,7 @@ void controlRestartTests(ProfileStore& store, const std::string& scratch) {
         if (std::string(phase) != "readback_verified") interrupted["profile"] = "Korea/LGU/Commercial";
         checksum(interrupted);
         durableWrite(efs.journal, interrupted);
-        Transaction txn(store, efs, path, [] { return "g2"; }, [] { return true; }, [] { return true; });
+        Transaction txn(store, efs, path, [] { return "g2"; }, [] { return true; });
         txn.enable(true);
         const int writes = efs.writes;
         txn.recover();
@@ -1226,7 +1223,7 @@ void controlRestartTests(ProfileStore& store, const std::string& scratch) {
     efs.files = base(store);
     efs.journal = path + "/journal.json";
     {
-        Transaction txn(store, efs, path, [] { return "g1"; }, [] { return true; }, [] { return true; });
+        Transaction txn(store, efs, path, [] { return "g1"; }, [] { return true; });
         txn.enable(true);
         txn.apply({"45006"}, token);
         txn.claimRestart(token);
@@ -1236,7 +1233,7 @@ void controlRestartTests(ProfileStore& store, const std::string& scratch) {
     }
     const auto reset = efs.files;
     {
-        Transaction resumed(store, efs, path, [] { return "g2"; }, [] { return true; }, [] { return true; });
+        Transaction resumed(store, efs, path, [] { return "g2"; }, [] { return true; });
         check(resumed.status().profile.empty() && resumed.status().nextProfile == "Korea/SKT/Commercial",
               "reset phase survives process death");
         resumed.resumeContext({}); // Safe control-only recovery can change identity.
@@ -1255,7 +1252,7 @@ void recoveryTests(ProfileStore& store, const std::string& scratch) {
     efs.files = base(store);
     efs.journal = path + "/journal.json";
     {
-        Transaction txn(store, efs, path, [] { return "g1"; }, [] { return true; }, [] { return true; });
+        Transaction txn(store, efs, path, [] { return "g1"; }, [] { return true; });
         txn.enable(true);
         txn.apply({"45006"}, std::string(32, 'a'));
     }
@@ -1270,10 +1267,10 @@ void recoveryTests(ProfileStore& store, const std::string& scratch) {
     std::ostringstream out, errors;
     auto cli = [&](const std::string& mode, uid_t uid = 1001) {
         out.str(""); errors.str("");
-        return runRecoveryCli(mode, uid, store, path, create, [] { return false; }, out, errors);
+        return runRecoveryCli(mode, uid, store, path, create, out, errors);
     };
     check(cli("--dump-readonly") == 0 && out.str().find("DUMP_OK") != std::string::npos,
-          "radio CLI dump is available under a read-only policy");
+          "radio CLI dump is available");
     check(out.str().find("before=") == std::string::npos && out.str().find("baseline=") == std::string::npos &&
                   out.str().find("wanted=") == std::string::npos, "dump reports no obsolete snapshot comparisons");
     const auto dumped = out.str();
@@ -1285,7 +1282,7 @@ void recoveryTests(ProfileStore& store, const std::string& scratch) {
     check(cli("--recover-baseline", 0) == 1 && sessions == opened, "baseline recovery CLI is removed");
     check(cli("--dump-readonly", 2000) == 1 && sessions == opened, "shell cannot open CLI EFS");
     {
-        Transaction live(store, efs, path, [] { return "g1"; }, [] { return true; }, [] { return true; });
+        Transaction live(store, efs, path, [] { return "g1"; }, [] { return true; });
         check(cli("--dump-readonly") == 1 && sessions == opened &&
                       errors.str().find("transaction locked") != std::string::npos,
               "live service mutex blocks a second DIAG session");
@@ -1413,7 +1410,7 @@ int main(int argc, char** argv) {
             efs.journal = dir + "/journal.json";
             {
                 Transaction txn(store, efs, dir, [] { return "g1"; },
-                                [] { return true; }, [] { return true; });
+                                [] { return true; });
                 txn.enable(true);
                 txn.apply({"45006"}, token);
                 txn.claimRestart(token);
@@ -1429,7 +1426,7 @@ int main(int argc, char** argv) {
             const auto before = readFile(efs.journal, 40 * 1024 * 1024);
             const int writes = efs.writes, reads = efs.reads;
             Transaction rebooted(store, efs, dir, [] { return "g2"; },
-                                 [] { return true; }, [] { return true; });
+                                 [] { return true; });
             rebooted.evaluate({"45006"}); // Same path as Binder apply.
             rebooted.apply({"45006"}, std::string(32, 'b'));
             if (mismatch.empty()) {
@@ -1446,23 +1443,23 @@ int main(int argc, char** argv) {
                       "changed source identity still rewrites and restarts");
             }
         }
-        auto run = [&](const std::function<void(Transaction&, FakeEfs&, std::string&, bool&, bool&,
+        auto run = [&](const std::function<void(Transaction&, FakeEfs&, std::string&, bool&,
                                                 const std::string&)>& test) {
             const auto dir = setup();
             FakeEfs efs;
             efs.files = baseline;
             efs.journal = dir + "/journal.json";
             std::string generation = "g1";
-            bool policy = true, safe = true;
+            bool safe = true;
             Transaction txn(
-                    store, efs, dir, [&] { return generation; }, [&] { return policy; },
+                    store, efs, dir, [&] { return generation; },
                     [&] { return safe; });
             check(!txn.status().enabled && txn.status().state == "disabled",
                   "Automatic off from first boot");
             txn.enable(true);
-            test(txn, efs, generation, policy, safe, dir);
+            test(txn, efs, generation, safe, dir);
         };
-        run([&](auto& txn, auto& efs, auto&, auto&, auto& safe, const auto&) {
+        run([&](auto& txn, auto& efs, auto&, auto& safe, const auto&) {
             txn.apply({"45006"}, token);
             efs.files[store.load("Korea/LGU/Commercial").begin()->first] = Bytes{0xee};
             auto beforeOff = efs.files;
@@ -1480,7 +1477,7 @@ int main(int argc, char** argv) {
             txn.complete(token);
             check(txn.status().state == "disabled", "switch-off completion while disabled");
         });
-        run([&](auto& txn, auto& efs, auto&, auto&, auto&, const auto&) {
+        run([&](auto& txn, auto& efs, auto&, auto&, const auto&) {
             txn.restore(token);
             txn.enable(true);
             txn.evaluate({"45006"});
@@ -1494,9 +1491,8 @@ int main(int argc, char** argv) {
             check(txn.claimRestart(token), "only selected profile claims restart after reenable");
             txn.complete(token);
         });
-        run([&](auto& txn, auto& efs, auto& generation, auto& policy, auto& safe, const auto&) {
+        run([&](auto& txn, auto& efs, auto& generation, auto& safe, const auto&) {
             (void)generation;
-            (void)policy;
             (void)safe;
             throws([&] { txn.apply({"45006", "45005"}, token); }, "conflict no apply");
             check(efs.writes == 0, "conflict zero writes");
@@ -1569,7 +1565,7 @@ int main(int argc, char** argv) {
             check(efs.files[selectedPath] == skt.at(selectedPath),
                   "managed drift repaired after modem wipe");
         });
-        run([&](auto& txn, auto& efs, auto&, auto&, auto& safe, const auto&) {
+        run([&](auto& txn, auto& efs, auto&, auto& safe, const auto&) {
             txn.apply({"45006"}, token);
             efs.files[store.load("Korea/LGU/Commercial").begin()->first] = Bytes{0xee};
             auto beforeOff = efs.files;
@@ -1587,7 +1583,7 @@ int main(int argc, char** argv) {
             txn.complete(token);
             check(txn.status().state == "disabled", "switch-off completion while disabled");
         });
-        run([&](auto& txn, auto& efs, auto&, auto&, auto&, const auto&) {
+        run([&](auto& txn, auto& efs, auto&, auto&, const auto&) {
             txn.restore(token);
             txn.enable(true);
             txn.evaluate({"45006"});
@@ -1601,7 +1597,7 @@ int main(int argc, char** argv) {
             check(txn.claimRestart(token), "only selected profile claims restart after reenable");
             txn.complete(token);
         });
-        run([&](auto& txn, auto& efs, auto& generation, auto& policy, auto& safe, const auto&) {
+        run([&](auto& txn, auto& efs, auto& generation, auto& safe, const auto&) {
             generation = "g2";
             txn.apply({"45006"}, token);
             txn.claimRestart(token);
@@ -1610,20 +1606,17 @@ int main(int argc, char** argv) {
             int written = efs.writes;
             generation = "g1";
             txn.enable(true); // Exercise write gates on a fresh explicit attempt.
-            policy = false;
-            throws([&] { txn.apply({"45006"}, token); }, "read-only policy");
-            policy = true;
             safe = false;
             throws([&] { txn.apply({"45006"}, token); }, "unknown emergency/call context");
             check(efs.writes == written, "unsafe zero writes");
         });
-        run([&](auto& txn, auto& efs, auto&, auto&, auto&, const auto&) {
+        run([&](auto& txn, auto& efs, auto&, auto&, const auto&) {
             efs.files[kControl] = Bytes{0};
             txn.apply({"45006"}, token);
             check(efs.writes == 1 && txn.status().state == "baseline_restart_pending",
                   "foreign overlay resets baseline without adding firmware approval");
         });
-        run([&](auto& txn, auto& efs, auto&, auto&, auto&, const auto&) {
+        run([&](auto& txn, auto& efs, auto&, auto&, const auto&) {
             txn.apply({"45006"}, token);
             txn.claimRestart(token);
             txn.complete(token);
@@ -1634,7 +1627,7 @@ int main(int argc, char** argv) {
                              {"step=mutate", "path=/", "injected missing parent", "errno=unknown"});
             check(efs.writes == 0, "no directory creation");
         });
-        run([&](auto& txn, auto& efs, auto&, auto&, auto&, const auto&) {
+        run([&](auto& txn, auto& efs, auto&, auto&, const auto&) {
             efs.failAt = 3;
             throws([&] { txn.apply({"45006"}, token); }, "injected apply failure");
             check(efs.files != baseline && efs.writes == 3 && txn.status().state == "error"
@@ -1645,7 +1638,7 @@ int main(int argc, char** argv) {
             txn.complete(token);
             check(txn.status().state == "committed", "failure then direct retry succeeds");
         });
-        run([&](auto& txn, auto& efs, auto&, auto&, auto&, const auto&) {
+        run([&](auto& txn, auto& efs, auto&, auto&, const auto&) {
             efs.corruptOnce = true;
             throws([&] { txn.apply({"45006"}, token); }, "readback failure");
             check(efs.files != baseline && txn.status().enabled && txn.status().state == "error",
@@ -1653,7 +1646,7 @@ int main(int argc, char** argv) {
             txn.apply({"45006"}, token);
             check(txn.status().state == "restart_pending", "readback failure can retry");
         });
-        run([&](auto& txn, auto& efs, auto&, auto&, auto&, const auto&) {
+        run([&](auto& txn, auto& efs, auto&, auto&, const auto&) {
             efs.failAt = store.load("Korea/LGU/Commercial").size() + 1;
             throws([&] { txn.apply({"45006"}, token); }, "failure after final profile write");
             const int writes = efs.writes;
@@ -1663,7 +1656,7 @@ int main(int argc, char** argv) {
             check(efs.writes > writes && txn.status().state == "restart_pending",
                   "fully written failed apply still retries and requests its restart");
         });
-        run([&](auto& txn, auto& efs, auto&, auto&, auto&, const auto&) {
+        run([&](auto& txn, auto& efs, auto&, auto&, const auto&) {
             efs.failAt = 4;
             throws([&] { txn.apply({"45006"}, token); }, "partial old carrier write");
             efs.failAt = -1;
@@ -1675,7 +1668,7 @@ int main(int argc, char** argv) {
             txn.apply({"45005"}, token);
             check(txn.status().profile == "Korea/SKT/Commercial", "P retries after failed Q and reset restart");
         });
-        run([&](auto& txn, auto& efs, auto&, auto&, auto& safe, const auto&) {
+        run([&](auto& txn, auto& efs, auto&, auto& safe, const auto&) {
             efs.afterWrite = [&](int writes) {
                 if (writes == 3) safe = false;
             };
@@ -1687,7 +1680,7 @@ int main(int argc, char** argv) {
             txn.apply({"45006"}, token);
             check(txn.status().state == "restart_pending", "fresh lease retries failed apply");
         });
-        run([&](auto& txn, auto& efs, auto&, auto&, auto& safe, const auto&) {
+        run([&](auto& txn, auto& efs, auto&, auto& safe, const auto&) {
             txn.apply({"45006"}, token);
             safe = false;
             throws([&] { txn.claimRestart(token); }, "call defers restart");
@@ -1700,7 +1693,7 @@ int main(int argc, char** argv) {
             check(efs.files == drifted && txn.status().state == "committed",
                   "post-restart drift completes without readback");
         });
-        run([&](auto& txn, auto& efs, auto&, auto&, auto&, const auto&) {
+        run([&](auto& txn, auto& efs, auto&, auto&, const auto&) {
             efs.failAt = 2;
             efs.failForever = true;
             throwsContaining([&] { txn.apply({"45006"}, token); },
@@ -1723,7 +1716,7 @@ int main(int argc, char** argv) {
             efs.journal = dir + "/journal.json";
             {
                 Transaction txn(
-                        store, efs, dir, [] { return "g1"; }, [] { return true; },
+                        store, efs, dir, [] { return "g1"; },
                         [] { return true; });
                 txn.enable(true);
                 txn.apply({"45006"}, token);
@@ -1735,7 +1728,7 @@ int main(int argc, char** argv) {
             const auto partial = efs.files;
             {
                 Transaction recovered(
-                        store, efs, dir, [] { return "g1"; }, [] { return true; },
+                        store, efs, dir, [] { return "g1"; },
                         [] { return true; });
                 if (std::string(phase) != "restart_pending") {
                     recovered.enable(false);
@@ -1769,7 +1762,7 @@ int main(int argc, char** argv) {
         efs.journal = dir + "/journal.json";
         {
             Transaction txn(
-                    store, efs, dir, [] { return "g1"; }, [] { return true; }, [] { return true; });
+                    store, efs, dir, [] { return "g1"; }, [] { return true; });
             txn.enable(true);
             txn.apply({"45006"}, token);
         }
@@ -1779,7 +1772,7 @@ int main(int argc, char** argv) {
         durableWrite(efs.journal, unfinished);
         {
             Transaction unsafe(
-                    store, efs, dir, [] { return "g1"; }, [] { return true; },
+                    store, efs, dir, [] { return "g1"; },
                     [] { return false; });
             int writes = efs.writes;
             throws([&] { unsafe.recover(); }, "unsafe startup recovery deferred");
@@ -1788,28 +1781,19 @@ int main(int argc, char** argv) {
         }
         {
             Transaction quarantined(
-                    store, efs, dir, [] { return "g2"; }, [] { return true; }, [] { return true; });
+                    store, efs, dir, [] { return "g2"; }, [] { return true; });
             quarantined.recover();
             check(efs.files != baseline && quarantined.status().state == "error",
                   "WAL recovery independent of modem version leaves EFS untouched");
         }
         durableWrite(efs.journal, unfinished);
-        {
-            Transaction readonly(
-                    store, efs, dir, [] { return "g1"; }, [] { return false; },
-                    [] { return true; });
-            int writes = efs.writes;
-            throws([&] { readonly.recover(); }, "read-only recovery deferred");
-            readonly.probe();
-            check(writes == efs.writes, "probe no writes with WAL");
-        }
         auto corrupt = parseJson(readFile(efs.journal, 40 * 1024 * 1024));
         corrupt["error"] = "tampered";
         durableWrite(efs.journal, corrupt);
         throws(
                 [&] {
                     Transaction invalid(
-                            store, efs, dir, [] { return "g1"; }, [] { return true; },
+                            store, efs, dir, [] { return "g1"; },
                             [] { return true; });
                 },
                 "journal checksum corruption");

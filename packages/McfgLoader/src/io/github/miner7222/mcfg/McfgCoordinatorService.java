@@ -13,6 +13,8 @@ import android.os.IBinder;
 import android.os.Looper;
 import android.os.SystemProperties;
 import android.os.SystemClock;
+import android.os.UserHandle;
+import android.provider.Settings;
 import android.telephony.CarrierConfigManager;
 import android.telephony.SubscriptionInfo;
 import android.telephony.SubscriptionManager;
@@ -52,6 +54,9 @@ public final class McfgCoordinatorService extends Service {
     private long restoredEpoch = -1;
     private volatile boolean contextSafe;
     private SharedPreferences prefs;
+    private UnsupportedCarrierNotice carrierNotice;
+    private volatile Map<Integer, String> noticeIdentities = new HashMap<>();
+    private boolean noticeReady;
     private String bootId = "";
     private SubscriptionManager subscriptions;
     private final CoordinatorState state = new CoordinatorState();
@@ -90,7 +95,12 @@ public final class McfgCoordinatorService extends Service {
     @Override
     public void onCreate() {
         super.onCreate();
+        if (UserHandle.myUserId() != UserHandle.USER_SYSTEM) {
+            stopSelf();
+            return;
+        }
         prefs = createDeviceProtectedStorageContext().getSharedPreferences("mcfg", MODE_PRIVATE);
+        carrierNotice = new UnsupportedCarrierNotice(this, prefs);
         configVersion = prefs.getLong("config_version", 0);
         verifiedConfigVersion = prefs.getLong("verified_config_version", 0);
         bootId = readBootId();
@@ -112,6 +122,7 @@ public final class McfgCoordinatorService extends Service {
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
+        if (prefs == null) return START_NOT_STICKY;
         if (intent != null && PROBE.equals(intent.getAction())) {
             transactions.execute(
                     () -> {
@@ -149,6 +160,10 @@ public final class McfgCoordinatorService extends Service {
 
     @Override
     public void onDestroy() {
+        if (prefs == null) {
+            super.onDestroy();
+            return;
+        }
         contextSafe = false;
         sendContext();
         main.removeCallbacks(heartbeat);
@@ -228,8 +243,13 @@ public final class McfgCoordinatorService extends Service {
 
     private void tick() {
         tickReady = false;
+        noticeReady = false;
+        carrierNotice.clearIfAutomatic();
         configVersion = prefs.getLong("config_version", 0);
         try {
+            if (Settings.Global.getInt(getContentResolver(),
+                    Settings.Global.AIRPLANE_MODE_ON, 0) != 0)
+                throw new IllegalStateException("airplane mode");
             if (!prefs.getString("restart_token", "").isEmpty()
                     && CoordinatorState.rebooted(prefs.getString("restart_boot_id", ""), bootId))
                 prefs.edit().putBoolean("restart_saw_down", true).commit();
@@ -243,6 +263,7 @@ public final class McfgCoordinatorService extends Service {
             state.setRadiosReady(radiosReady);
             if (!radiosReady) throw new IllegalStateException("radio not ready");
             List<String> operators = new ArrayList<>();
+            Map<Integer, String> identities = new HashMap<>();
             for (SubscriptionInfo info : active) {
                 // A privileged carrier app is layered after vendor.xml by
                 // CarrierConfigLoader. Pin only the entry keys when it replaces them.
@@ -263,12 +284,17 @@ public final class McfgCoordinatorService extends Service {
                 if (!operator.matches("[0-9]{5,6}"))
                     throw new IllegalStateException("home operator unknown");
                 operators.add(operator);
+                identities.put(info.getSubscriptionId(), operator + ":"
+                        + manager.getSimCarrierId() + ":" + manager.getSimSpecificCarrierId());
             }
             operators.sort(String::compareTo);
             String nextIdentity = active.isEmpty() ? "no_sim" : String.join(";", operators);
             state.observe(nextIdentity);
             home = operators.toArray(new String[0]);
             contextEpoch = state.epoch();
+            noticeIdentities = identities;
+            carrierNotice.observe(identities);
+            noticeReady = !identities.isEmpty();
             // Revoke automatic leases immediately on removal, including queued
             // control-only completions/claims; explicit OFF can still use the radio.
             contextSafe = CoordinatorState.shouldCoordinate(prefs.getBoolean("automatic", false), home.length);
@@ -276,6 +302,7 @@ public final class McfgCoordinatorService extends Service {
             if (!busy.getAndSet(true)) transactions.execute(this::coordinate);
             tickReady = true;
         } catch (Exception e) {
+            carrierNotice.cancel();
             home = new String[0];
             state.clear();
             contextSafe = false;
@@ -329,6 +356,7 @@ public final class McfgCoordinatorService extends Service {
 
     private void coordinate() {
         final long epoch = contextEpoch;
+        final Map<Integer, String> identities = new HashMap<>(noticeIdentities);
         final long version = configVersion;
         final String identity = state.identity();
         final int loadedSimCount = home.length;
@@ -378,6 +406,11 @@ public final class McfgCoordinatorService extends Service {
                 prefs.edit().putLong("configured_version", version).commit();
             }
             publish(status);
+            main.post(() -> {
+                if (noticeReady && epoch == contextEpoch && version == configVersion
+                        && identities.equals(noticeIdentities))
+                    carrierNotice.show(identities);
+            });
             if (!contextSafe
                     || epoch != contextEpoch
                     || epoch != state.epoch()
@@ -596,6 +629,8 @@ public final class McfgCoordinatorService extends Service {
         public void onRadioPowerStateChanged(int state) {
             radioOn = state == TelephonyManager.RADIO_POWER_ON;
             if (!radioOn) {
+                noticeReady = false;
+                carrierNotice.cancel();
                 // Invalidate before recording the down witness: SIM LOADED may lag SSR.
                 McfgCoordinatorService.this.state.setRadiosReady(false);
                 contextSafe = false;

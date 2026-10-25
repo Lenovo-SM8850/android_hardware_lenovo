@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 package io.github.miner7222.mcfg;
 
+import java.util.Set;
+
 /** Loaded SIM identity epochs, independent of Android Binder. */
 final class CoordinatorState {
     private String identity = "";
@@ -10,6 +12,11 @@ final class CoordinatorState {
     private long retryEpoch = -1, retryVersion = -1, retryAt;
     private int failures;
     private static final long[] RETRY_DELAYS = {30_000, 120_000, 600_000};
+    // Home PLMNs in the stock wuji named commercial MBNs' MCFG_TRL.mnoid lists.
+    private static final Set<String> BUILT_IN_PLMNS = Set.of(
+            "45502", "45507", "46000", "46001", "46002", "46003", "46004", "46005",
+            "46006", "46007", "46008", "46009", "46011", "46012", "46013", "46015",
+            "46030", "46059");
 
     synchronized boolean observe(String value) {
         loaded = true;
@@ -75,6 +82,16 @@ final class CoordinatorState {
 
     static boolean shouldRestoreUnsupported(String selectionState, int loadedSimCount) {
         return "unsupported".equals(selectionState) && loadedSimCount == 1;
+    }
+
+    static boolean shouldNotifyUnsupported(boolean automatic, String identity, String lastNotified) {
+        String operator = identity.split(":", -1)[0];
+        return !automatic && operator.matches("[0-9]{5,6}")
+                && !BUILT_IN_PLMNS.contains(operator) && !identity.equals(lastNotified);
+    }
+
+    static boolean shouldResetCarrierNotice(boolean automatic, String identity, String observed) {
+        return automatic || !identity.equals(observed);
     }
 
     static boolean shouldRestoreAutomatic(String selectionState, int loadedSimCount,
