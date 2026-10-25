@@ -17,4 +17,48 @@
     <string name="config_penUEventTarget" translatable="false">PEN_FRAMEWORK TYPE=TP</string>
     <bool name="config_penEarlyChangeActivity">false</bool>
     <bool name="config_penWritingHapticsSupported">false</bool>
+    <!-- Note and annotation apps whose focused windows keep the tail button from opening notes. -->
+    <string-array name="config_penNotePackages" translatable="false">
+        <item>com.acadoid.lecturenotes</item>
+        <item>com.adobe.reader</item>
+        <item>com.dencreak.esmemo</item>
+        <item>com.evernote</item>
+        <item>com.fiistudio.fiinote</item>
+        <item>com.flexcil.flexcilnote</item>
+        <item>com.fluidtouch.noteshelf2</item>
+        <item>com.foxit.mobile.pdf.lite</item>
+        <item>com.goodnotepad.smarttodolistnote</item>
+        <item>com.google.android.keep</item>
+        <item>com.jideos.jnotes</item>
+        <item>com.jideos.jnotes.overseas.google</item>
+        <item>com.kdanmobile.android.pdfreader.google.pad</item>
+        <item>com.kreoSoft.Notepad</item>
+        <item>com.litewhite.notemaster.free</item>
+        <item>com.luyun.lightnote</item>
+        <item>com.microsoft.office.onenote</item>
+        <item>com.mubu.app</item>
+        <item>com.myscript.nebo</item>
+        <item>com.newskyer.draw</item>
+        <item>com.nineton.shouzhang</item>
+        <item>com.orion.notein</item>
+        <item>com.penly.planner.notes.tasks.reminders</item>
+        <item>com.steadfastinnovation.android.projectpapyrus</item>
+        <item>com.tophatch.concepts</item>
+        <item>com.tophatch.concepts.china</item>
+        <item>com.topstack.kilonotes.pad</item>
+        <item>com.viettran.INKredible</item>
+        <item>com.viettran.INKrediblePro</item>
+        <item>com.wacom.bamboopapertab</item>
+        <item>com.xodo.pdf.reader</item>
+        <item>com.yinxiang</item>
+        <item>com.yocto.wenote</item>
+        <item>com.youdao.note</item>
+        <item>com.zoho.notebook</item>
+        <item>com.zui.notes</item>
+        <item>io.notewise.app</item>
+        <item>kr.neolab.neonote</item>
+        <item>note.notepad.diary.notebook</item>
+        <item>note.notepad.todo.notebook</item>
+        <item>org.mightyfrog.android.simplenotepad</item>
+    </string-array>
 </resources>
