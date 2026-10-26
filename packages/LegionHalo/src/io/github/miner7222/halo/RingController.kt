@@ -34,6 +34,7 @@ object RingController {
     private lateinit var handler: Handler
     private lateinit var session: ReactiveSession
     private lateinit var pulses: AudioPulseWorker
+    private lateinit var contentColors: ContentColors
     private var remote: ILightRing? = null
     private var binder: IBinder? = null
     private var lastEffect: String? = null
@@ -42,6 +43,7 @@ object RingController {
     private var pulseLevel: Int? = null
     private var clearPending = false
     private var retryAt = 0L
+    private var lastWriteAt = 0L
     @Volatile var connected = false
         private set
     private val applyState = Runnable { apply() }
@@ -67,11 +69,12 @@ object RingController {
         session = ReactiveSession(context, handler) { refresh() }
         pulses = AudioPulseWorker(handler, { level ->
             pulseLevel = level
-            apply()
+            refresh()
         }, {
             pulseLevel = null
             refresh()
         })
+        contentColors = ContentColors(context, handler) { refresh() }
         preferences.registerOnSharedPreferenceChangeListener(preferenceListener)
         context.contentResolver.registerContentObserver(
             Settings.Secure.getUriFor(ReactiveSettings.ENABLED), false,
@@ -131,6 +134,8 @@ object RingController {
             pulseLevel = null
         }
         val reactive = scene != "idle" && !session.failed
+        contentColors.track(scene, session.gamePackage,
+            allowed && ReactiveSettings.enabled(context) && music)
         val audio = reactive && session.hasAudio(music, games) &&
             preferences.getBoolean("react_rhythm", true) &&
             context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
@@ -148,23 +153,25 @@ object RingController {
         val palette = parseColours(preferences.getString("colours", DEFAULT_COLOURS)!!)
             ?: parseColours(DEFAULT_COLOURS)!!
         val brightness = preferences.getInt("brightness", 128).coerceIn(0, 255)
+        val contentColor = contentColors.color(palette[0])
         val effect = when {
             !allowed -> null
             reactive && pulseLevel != null -> Effect().apply {
                 type = 0
-                colors = intArrayOf(palette[0])
+                colors = intArrayOf(contentColor)
                 speed = 1
                 this.brightness = brightness * pulseLevel!! / 15
             }
             enabled() -> Effect().apply {
                 type = preferences.getString("effect", "2")!!.toInt().coerceIn(0, 3)
-                colors = if (type < 2) intArrayOf(palette[0]) else palette
+                colors = if (reactive) intArrayOf(contentColor)
+                    else if (type < 2) intArrayOf(palette[0]) else palette
                 speed = preferences.getString("speed", "1")!!.toInt().coerceIn(0, 2)
                 this.brightness = brightness
             }
             reactive -> Effect().apply {
                 type = 2
-                colors = palette
+                colors = intArrayOf(contentColor)
                 speed = 1
                 this.brightness = brightness
             }
@@ -207,8 +214,16 @@ object RingController {
             val key = effect?.let { "${it.type}:${it.colors.joinToString()}:${it.speed}:${it.brightness}" }
                 ?: "off"
             if (lastEffect != key) {
+                // Coalesce FFT and colour changes into the same eight-frame/s LED budget.
+                val nextWrite = lastWriteAt + 125
+                if (reactive && effect != null && SystemClock.uptimeMillis() < nextWrite) {
+                    handler.removeCallbacks(applyState)
+                    handler.postAtTime(applyState, nextWrite)
+                    return
+                }
                 if (effect == null) remote!!.clearEffect() else remote!!.setEffect(effect)
                 lastEffect = key
+                lastWriteAt = SystemClock.uptimeMillis()
             }
             connectionChanged(true)
         } catch (exception: Exception) {

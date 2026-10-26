@@ -27,8 +27,8 @@ with tempfile.TemporaryDirectory(prefix="halo-lifecycle-") as directory:
         path.write_text(content)
         sources.append(str(path))
     sources.extend(str(root / "src/io/github/miner7222/halo" / name)
-                   for name in ["AudioPulseWorker.kt", "ReactiveSession.kt"])
-    sources.append(str(here / "ReactiveLifecycleTest.kt"))
+                   for name in ["AudioPulseWorker.kt", "ReactiveSession.kt", "ContentColorSmoother.kt"])
+    sources.extend(str(path) for path in here.glob("*Test.kt"))
     subprocess.run([compiler, "-nowarn", *sources, "-include-runtime", "-d", str(target / "test.jar")],
                    check=True, env=env)
     subprocess.run([java, "-jar", str(target / "test.jar")], check=True)
