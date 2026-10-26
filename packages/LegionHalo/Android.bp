@@ -12,6 +12,7 @@ android_app {
     static_libs: [
         "vendor.lenovo.hardware.lightring-V1-java",
         "androidx.preference_preference",
+        "androidx.palette_palette",
         "SettingsLib",
     ],
     optimize: { enabled: false },
