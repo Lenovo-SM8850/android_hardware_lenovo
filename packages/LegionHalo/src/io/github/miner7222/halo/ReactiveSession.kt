@@ -25,6 +25,8 @@ class ReactiveSession(
     private var taskRegistered = false
     private var playback = emptyList<AudioPlaybackConfiguration>()
     private var gameUid: Int? = null
+    var gamePackage: String? = null
+        private set
     private val retry = Runnable {
         failed = false
         changed()
@@ -38,9 +40,11 @@ class ReactiveSession(
                 context.packageManager.getApplicationInfo(packageName, 0)
             } else null
             gameUid = app?.takeIf { it.category == ApplicationInfo.CATEGORY_GAME }?.uid
+            gamePackage = packageName.takeIf { gameUid != null }
             changed()
         } catch (_: PackageManager.NameNotFoundException) {
             gameUid = null
+            gamePackage = null
             changed()
         } catch (exception: RuntimeException) {
             fail(exception)
@@ -110,6 +114,7 @@ class ReactiveSession(
         taskRegistered = false
         playback = emptyList()
         gameUid = null
+        gamePackage = null
         handler.removeCallbacks(queryTask)
         handler.removeCallbacks(retry)
     }
