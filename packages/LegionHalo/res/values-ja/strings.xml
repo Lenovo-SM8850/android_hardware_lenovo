@@ -1,0 +1,40 @@
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
+<resources>
+    <string name="app_name">Legion Halo</string>
+    <string name="settings_summary">Legion Halo の色と効果</string>
+    <string name="enabled">Legion Halo を使用</string>
+    <string name="description">ライトの色と効果を選択します。</string>
+    <string name="availability">画面がオンで、バッテリー セーバーがオフのときに動作します。音楽のアートワークやゲームの色を使用します。</string>
+    <string name="effect">効果</string>
+    <string name="static_colour">単色</string>
+    <string name="breathing">明滅</string>
+    <string name="rainbow">虹色の回転</string>
+    <string name="colour_cycle">色の循環</string>
+    <string name="colours">色</string>
+    <string name="colours_help">色を選択するか、16進数のカラーコードを入力してください。</string>
+    <string name="invalid_colours">6 桁の 16 進数 RGB コードを入力してください。</string>
+    <string name="speed">速度</string>
+    <string name="speed_summary">効果の速度を調整します。</string>
+    <string name="slow">遅い</string>
+    <string name="normal">標準</string>
+    <string name="fast">速い</string>
+    <string name="fixed_speed">虹色の回転は固定速度で動作します。</string>
+    <string name="brightness">明るさ</string>
+    <string name="react_enabled">音楽とゲームに反応</string>
+    <string name="react_summary">再生中やゲーム中に自動で効果を使用します。</string>
+    <string name="react_music">音楽</string>
+    <string name="react_games">ゲーム</string>
+    <string name="react_games_summary">ゲームでライト効果を使用します。</string>
+    <string name="react_rhythm">音のリズムに合わせる</string>
+    <string name="react_rhythm_summary">音のリズムに合わせて点滅します。</string>
+    <string name="paused">一時停止中</string>
+    <string name="service_unavailable">利用できません</string>
+    <string name="colour_number">色 %1$d</string>
+    <string name="reorder_colour">%1$sの順序を変更</string>
+    <string name="move_up">上に移動</string>
+    <string name="move_down">下に移動</string>
+    <string name="hue">色相</string>
+    <string name="colour_code">カラーコード</string>
+    <string name="saturation_value">彩度 %1$d%%、明度 %2$d%%</string>
+</resources>

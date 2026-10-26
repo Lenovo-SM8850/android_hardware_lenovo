@@ -1,0 +1,40 @@
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
+<resources>
+    <string name="app_name">Legion Halo</string>
+    <string name="settings_summary">Цвета и эффекты Legion Halo</string>
+    <string name="enabled">Использовать Legion Halo</string>
+    <string name="description">Выберите цвета и эффекты подсветки.</string>
+    <string name="availability">Работает при включённом экране и выключенном режиме энергосбережения. Использует цвета из обложек музыки и игр.</string>
+    <string name="effect">Эффект</string>
+    <string name="static_colour">Постоянный цвет</string>
+    <string name="breathing">Пульсация</string>
+    <string name="rainbow">Вращение радуги</string>
+    <string name="colour_cycle">Циклическая смена цветов</string>
+    <string name="colours">Цвета</string>
+    <string name="colours_help">Выберите цвет или введите HEX-код.</string>
+    <string name="invalid_colours">Введите шестизначный шестнадцатеричный код цвета RGB.</string>
+    <string name="speed">Скорость</string>
+    <string name="speed_summary">Регулировка скорости эффекта.</string>
+    <string name="slow">Низкая</string>
+    <string name="normal">Обычная</string>
+    <string name="fast">Высокая</string>
+    <string name="fixed_speed">Вращение радуги работает с фиксированной скоростью.</string>
+    <string name="brightness">Яркость</string>
+    <string name="react_enabled">Реагировать на музыку и игры</string>
+    <string name="react_summary">Использовать автоматические эффекты во время воспроизведения и в играх.</string>
+    <string name="react_music">Музыка</string>
+    <string name="react_games">Игры</string>
+    <string name="react_games_summary">Использовать световые эффекты в играх.</string>
+    <string name="react_rhythm">Следовать ритму звука</string>
+    <string name="react_rhythm_summary">Пульсация в такт звуку.</string>
+    <string name="paused">Приостановлено</string>
+    <string name="service_unavailable">Недоступно</string>
+    <string name="colour_number">Цвет %1$d</string>
+    <string name="reorder_colour">Изменить порядок: %1$s</string>
+    <string name="move_up">Переместить вверх</string>
+    <string name="move_down">Переместить вниз</string>
+    <string name="hue">Цветовой тон</string>
+    <string name="colour_code">Код цвета</string>
+    <string name="saturation_value">Насыщенность %1$d%%, яркость %2$d%%</string>
+</resources>

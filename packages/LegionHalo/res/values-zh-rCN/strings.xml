@@ -1,0 +1,40 @@
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
+<resources>
+    <string name="app_name">Legion Halo</string>
+    <string name="settings_summary">Legion Halo 颜色和效果</string>
+    <string name="enabled">使用 Legion Halo</string>
+    <string name="description">选择灯光颜色和效果。</string>
+    <string name="availability">屏幕开启且省电模式关闭时生效。使用音乐封面和游戏中的颜色。</string>
+    <string name="effect">效果</string>
+    <string name="static_colour">单色</string>
+    <string name="breathing">呼吸</string>
+    <string name="rainbow">彩虹旋转</string>
+    <string name="colour_cycle">颜色循环</string>
+    <string name="colours">颜色</string>
+    <string name="colours_help">选择颜色或输入十六进制代码。</string>
+    <string name="invalid_colours">请输入六位十六进制 RGB 颜色代码。</string>
+    <string name="speed">速度</string>
+    <string name="speed_summary">调整效果速度。</string>
+    <string name="slow">慢</string>
+    <string name="normal">正常</string>
+    <string name="fast">快</string>
+    <string name="fixed_speed">彩虹旋转使用固定速度。</string>
+    <string name="brightness">亮度</string>
+    <string name="react_enabled">响应音乐和游戏</string>
+    <string name="react_summary">播放和游戏期间使用自动灯效。</string>
+    <string name="react_music">音乐</string>
+    <string name="react_games">游戏</string>
+    <string name="react_games_summary">为游戏使用灯光效果。</string>
+    <string name="react_rhythm">跟随音频节奏</string>
+    <string name="react_rhythm_summary">随音频节奏脉动。</string>
+    <string name="paused">已暂停</string>
+    <string name="service_unavailable">不可用</string>
+    <string name="colour_number">颜色 %1$d</string>
+    <string name="reorder_colour">调整%1$s的顺序</string>
+    <string name="move_up">上移</string>
+    <string name="move_down">下移</string>
+    <string name="hue">色相</string>
+    <string name="colour_code">颜色代码</string>
+    <string name="saturation_value">饱和度 %1$d%%，明度 %2$d%%</string>
+</resources>
