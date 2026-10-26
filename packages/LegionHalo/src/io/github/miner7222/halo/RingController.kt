@@ -134,7 +134,7 @@ object RingController {
             pulseLevel = null
         }
         val reactive = scene != "idle" && !session.failed
-        contentColors.track(scene,
+        contentColors.track(scene, session.gamePackage,
             allowed && ReactiveSettings.enabled(context) && music)
         val audio = reactive && session.hasAudio(music, games) &&
             preferences.getBoolean("react_rhythm", true) &&

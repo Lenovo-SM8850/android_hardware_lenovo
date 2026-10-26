@@ -14,6 +14,7 @@ import android.media.audiofx.Visualizer
 import android.os.Handler
 
 fun main() {
+    testContentColors()
     val handler = Handler()
     val levels = mutableListOf<Int?>()
     var errors = 0
