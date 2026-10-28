@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+     SPDX-License-Identifier: Apache-2.0
+-->
+<resources>
+    <string name="app_name">Dolby Vision 服務</string>
+    <string name="notification_channel">Dolby</string>
+    <string name="notification_title">Dolby Vision 模式選擇</string>
+    <string name="notification_bright_mode">Dolby Vision 明亮</string>
+    <string name="notification_vivid_mode">Dolby Vision 鮮豔</string>
+    <string name="notification_dark_mode">Dolby Vision 柔和</string>
+    <string name="content_text_bright">針對明亮環境進行了最佳化</string>
+    <string name="content_text_vivid">針對鮮明的圖像進行了最佳化，增強了亮度和色彩</string>
+    <string name="content_text_dark">針對在黑暗環境中觀看電影進行了最佳化</string>
+    <string name="notification_bright">明亮</string>
+    <string name="notification_vivid">鮮豔</string>
+    <string name="notification_dark">柔和</string>
+</resources>

@@ -1,0 +1,32 @@
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
+<resources>
+    <string name="app_name">Legion Halo</string>
+    <string name="settings_summary">후면 조명의 색상과 효과를 설정합니다.</string>
+    <string name="enabled">Legion Halo 사용</string>
+    <string name="availability">화면이 켜져 있고 절전 모드가 꺼져 있을 때 작동합니다.</string>
+    <string name="effect">효과</string>
+    <string name="static_colour">단색</string>
+    <string name="breathing">숨쉬기</string>
+    <string name="rainbow">무지개 회전</string>
+    <string name="colour_cycle">색상 순환</string>
+    <string name="colours">색상</string>
+    <string name="invalid_colours">6자리 RGB 색상 코드를 입력하세요.</string>
+    <string name="speed">속도</string>
+    <string name="slow">느리게</string>
+    <string name="normal">보통</string>
+    <string name="fast">빠르게</string>
+    <string name="brightness">밝기</string>
+    <string name="react_enabled">음악 및 게임에 반응</string>
+    <string name="react_music">음악</string>
+    <string name="react_games">게임</string>
+    <string name="react_rhythm">오디오 리듬 따르기</string>
+    <string name="paused">일시중지됨</string>
+    <string name="service_unavailable">사용할 수 없음</string>
+    <string name="colour_number">색상 %1$d</string>
+    <string name="move_up">위로 이동</string>
+    <string name="move_down">아래로 이동</string>
+    <string name="hue">색조</string>
+    <string name="colour_code">색상 코드</string>
+    <string name="saturation_value">채도 %1$d%%, 명도 %2$d%%</string>
+</resources>

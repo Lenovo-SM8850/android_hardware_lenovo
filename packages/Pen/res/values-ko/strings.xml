@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+     SPDX-License-Identifier: Apache-2.0
+-->
+<resources>
+    <string name="app_name">Lenovo 펜</string>
+    <string name="pen_notification_channel">펜 상태</string>
+    <string name="pen_detected">Lenovo 펜 감지됨</string>
+    <string name="pen_detected_named">%1$s 감지됨</string>
+    <string name="pen_pair_action">페어링</string>
+    <string name="pen_pairing">페어링 중…</string>
+    <string name="pen_paired">페어링됨</string>
+    <string name="pen_pair_failed">펜을 페어링하지 못했습니다. 펜을 화면 가까이에 두고 다시 시도하세요.</string>
+    <string name="pen_bluetooth_off">펜을 페어링하려면 블루투스를 켜세요.</string>
+    <string name="pen_battery_low_title">펜 배터리 부족</string>
+    <string name="pen_battery_low">배터리가 %1$d%% 남았습니다. 펜을 충전하세요.</string>
+    <string name="pen_battery_critical">배터리가 %1$d%%밖에 남지 않았습니다. 지금 펜을 충전하세요.</string>
+    <string name="pen_writing_haptics">필기 진동</string>
+    <string name="pen_writing_haptics_summary">지원하는 앱에서 필기할 때 진동합니다.</string>
+    <string name="pen_haptic_level">진동 세기</string>
+    <string name="pen_haptic_level_1">가장 약하게</string>
+    <string name="pen_haptic_level_2">약하게</string>
+    <string name="pen_haptic_level_3">보통</string>
+    <string name="pen_haptic_level_4">강하게</string>
+    <string name="pen_haptic_level_5">가장 강하게</string>
+</resources>
