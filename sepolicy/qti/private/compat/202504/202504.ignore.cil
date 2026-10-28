@@ -4,4 +4,5 @@
 (typeattributeset new_objects
   ( new_objects
     lenovo_pen_type_prop
-    hal_lightring_service))
+    hal_lightring_service
+    hal_game_policy_service))

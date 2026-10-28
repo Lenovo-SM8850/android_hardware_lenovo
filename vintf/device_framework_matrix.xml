@@ -97,4 +97,12 @@
             <instance>default</instance>
         </interface>
     </hal>
+    <hal format="aidl" optional="true">
+        <name>io.github.miner7222.gamepolicy</name>
+        <version>1</version>
+        <interface>
+            <name>IGamePolicy</name>
+            <instance>default</instance>
+        </interface>
+    </hal>
 </compatibility-matrix>

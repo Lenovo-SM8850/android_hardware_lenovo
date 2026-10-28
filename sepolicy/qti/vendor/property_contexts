@@ -13,3 +13,4 @@ vendor.hw.ai.          u:object_r:vendor_hw_ai_prop:s0
 persist.vendor.dolbyv.  u:object_r:vendor_dolbyv_prop:s0
 vendor.dolbyv.          u:object_r:vendor_dolbyv_prop:s0
 vendor.lenovo.game_mode  u:object_r:vendor_lenovo_game_mode_prop:s0 exact bool
+vendor.lenovo.game_thermal_case  u:object_r:vendor_lenovo_game_thermal_case_prop:s0 exact enum 0 100 200 300 400
