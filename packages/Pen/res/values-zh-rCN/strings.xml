@@ -6,6 +6,7 @@
     <string name="app_name">Lenovo 触控笔</string>
     <string name="pen_notification_channel">触控笔状态</string>
     <string name="pen_detected">检测到 Lenovo 触控笔</string>
+    <string name="pen_detected_named">检测到 %1$s</string>
     <string name="pen_pair_action">配对</string>
     <string name="pen_pairing">正在配对…</string>
     <string name="pen_paired">已配对</string>

@@ -6,6 +6,7 @@
     <string name="app_name">Lenovo 펜</string>
     <string name="pen_notification_channel">펜 상태</string>
     <string name="pen_detected">Lenovo 펜 감지됨</string>
+    <string name="pen_detected_named">%1$s 감지됨</string>
     <string name="pen_pair_action">페어링</string>
     <string name="pen_pairing">페어링 중…</string>
     <string name="pen_paired">페어링됨</string>

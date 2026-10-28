@@ -6,6 +6,7 @@
     <string name="app_name">Стилус Lenovo</string>
     <string name="pen_notification_channel">Состояние стилуса</string>
     <string name="pen_detected">Обнаружен стилус Lenovo</string>
+    <string name="pen_detected_named">Обнаружен %1$s</string>
     <string name="pen_pair_action">Сопрячь</string>
     <string name="pen_pairing">Сопряжение…</string>
     <string name="pen_paired">Сопряжено</string>

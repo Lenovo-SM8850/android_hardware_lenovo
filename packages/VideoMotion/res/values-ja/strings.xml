@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<resources>
+    <string name="app_name">動画の動きを滑らかにする</string>
+    <string name="settings_summary">動画の再生を滑らかに</string>
+    <string name="enabled">動画の動きを滑らかにする機能を使用</string>
+    <string name="availability">フレームを追加して、動画の再生を滑らかにします。</string>
+    <string name="limits">選択したアプリの対応する動画のみが対象です。設定を変更した後は、再生を開始し直してください。保護されたコンテンツ、HDR 動画、一部の TV 向けストリーミングは対象外です。</string>
+    <string name="user_limit">管理者のみ使用できます。</string>
+    <string name="tile_admin_only">管理者のみ</string>
+    <string name="shared_uid">UID を共有するアプリには同じ設定が適用されます。</string>
+    <string name="search_apps">アプリを検索</string>
+    <string name="no_apps">一致するアプリがありません</string>
+</resources>

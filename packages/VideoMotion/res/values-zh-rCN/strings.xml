@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<resources>
+    <string name="app_name">视频运动平滑</string>
+    <string name="settings_summary">流畅的视频播放</string>
+    <string name="enabled">使用视频运动平滑</string>
+    <string name="availability">添加额外帧，让视频播放更流畅。</string>
+    <string name="limits">仅适用于所选应用中受支持的视频。更改设置后，请重新开始播放。不支持受保护内容、HDR 视频和部分电视类流媒体。</string>
+    <string name="user_limit">仅限管理员使用。</string>
+    <string name="tile_admin_only">仅限管理员</string>
+    <string name="shared_uid">共享 UID 的应用也会共享此设置。</string>
+    <string name="search_apps">搜索应用</string>
+    <string name="no_apps">没有匹配的应用</string>
+</resources>

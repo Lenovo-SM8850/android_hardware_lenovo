@@ -6,6 +6,7 @@
     <string name="app_name">Lenovo ペン</string>
     <string name="pen_notification_channel">ペンの状態</string>
     <string name="pen_detected">Lenovo ペンを検出しました</string>
+    <string name="pen_detected_named">%1$s を検出しました</string>
     <string name="pen_pair_action">ペア設定する</string>
     <string name="pen_pairing">ペア設定中…</string>
     <string name="pen_paired">ペア設定済み</string>
