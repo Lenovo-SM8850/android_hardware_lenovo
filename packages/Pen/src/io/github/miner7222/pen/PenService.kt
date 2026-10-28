@@ -329,11 +329,7 @@ class PenService : Service() {
     private fun isKnownPen(device: BluetoothDevice): Boolean {
         val type = BluetoothDevice.DEVICE_TYPE_STYLUS.toByteArray(Charsets.UTF_8)
         return device.getMetadata(BluetoothDevice.METADATA_DEVICE_TYPE)?.contentEquals(type) == true ||
-            when (device.name) {
-                "Lenovo Tab Pen Plus" -> penTypes.containsKey(0x17ef to 0x617f)
-                "Lenovo Tab Pen Pro 2" -> penTypes.containsKey(0x17ef to 0x622e)
-                else -> false
-            }
+            PEN_NAMES.any { (ids, name) -> device.name == name && penTypes.containsKey(ids) }
     }
 
     private fun reconnectPen(address: String) {
@@ -643,7 +639,8 @@ class PenService : Service() {
         }
         try {
             val notification = Notification.Builder(this, CHANNEL)
-                .setSmallIcon(R.drawable.ic_stylus).setContentTitle(getString(R.string.pen_detected))
+                .setSmallIcon(R.drawable.ic_stylus).setContentTitle(PEN_NAMES[info.vid to info.pid]
+                    ?.let { getString(R.string.pen_detected_named, it) } ?: getString(R.string.pen_detected))
                 .setOnlyAlertOnce(true)
             if (message != null) notification.setContentText(getString(message))
             if (message == R.string.pen_paired) {
@@ -791,5 +788,10 @@ class PenService : Service() {
         private const val LEGACY_CHANNEL = "LenovoPen"
         private const val NOTIFICATION_ID = 1000
         private const val ACTION_PAIR = "io.github.miner7222.pen.PAIR"
+        // Product names the pens advertise over Bluetooth.
+        private val PEN_NAMES = mapOf(
+            (0x17ef to 0x617f) to "Lenovo Tab Pen Plus",
+            (0x17ef to 0x622e) to "Lenovo Tab Pen Pro 2",
+        )
     }
 }
