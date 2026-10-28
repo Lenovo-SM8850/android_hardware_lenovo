@@ -1,0 +1,10 @@
+# SPDX-License-Identifier: Apache-2.0
+service vendor.game-policy /vendor/bin/vendor.lenovo.game-policy
+    class hal
+    user system
+    group system readproc
+    onrestart setprop vendor.lenovo.game_thermal_case 0
+
+# A restart/stop must also clear an unbounded thermal selection. Perf locks expire.
+on property:init.svc.vendor.game-policy=stopped
+    setprop vendor.lenovo.game_thermal_case 0
