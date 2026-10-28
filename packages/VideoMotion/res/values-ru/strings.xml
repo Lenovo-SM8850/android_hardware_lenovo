@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<resources>
+    <string name="app_name">Сглаживание движения в видео</string>
+    <string name="settings_summary">Делает движение в поддерживаемых видео плавнее.</string>
+    <string name="enabled">Использовать сглаживание движения в видео</string>
+    <string name="limits">После изменения настройки начните воспроизведение заново. Защищённое от копирования видео, HDR и некоторые ТВ-потоки не поддерживаются.</string>
+    <string name="user_limit">Доступно только администратору.</string>
+    <string name="tile_admin_only">Только для администратора</string>
+    <string name="shared_uid">Для приложений с общим UID действует одна настройка.</string>
+    <string name="search_apps">Поиск приложений</string>
+    <string name="no_apps">Нет подходящих приложений</string>
+</resources>

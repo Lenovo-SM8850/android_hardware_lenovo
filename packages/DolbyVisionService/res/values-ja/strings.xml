@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+     SPDX-License-Identifier: Apache-2.0
+-->
+<resources>
+    <string name="app_name">Dolby Vision サービス</string>
+    <string name="notification_channel">Dolby</string>
+    <string name="notification_title">Dolby Vision モード選択</string>
+    <string name="notification_bright_mode">Dolby Vision ブライト</string>
+    <string name="notification_vivid_mode">Dolby Vision ビビッド</string>
+    <string name="notification_dark_mode">Dolby Vision ダーク</string>
+    <string name="content_text_bright">明るい環境に最適化されています。</string>
+    <string name="content_text_vivid">明るさと色彩を強調した鮮やかな映像に最適化されています。</string>
+    <string name="content_text_dark">暗い環境での映画鑑賞に最適化されています。</string>
+    <string name="notification_bright">ブライト</string>
+    <string name="notification_vivid">ビビッド</string>
+    <string name="notification_dark">ダーク</string>
+</resources>
