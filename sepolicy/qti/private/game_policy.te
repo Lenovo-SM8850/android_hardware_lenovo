@@ -1,0 +1,3 @@
+# SPDX-License-Identifier: Apache-2.0
+# The framework session authority is the only service client.
+hal_client_domain(system_server, hal_game_policy)

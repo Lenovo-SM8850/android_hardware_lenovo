@@ -1,0 +1,36 @@
+// SPDX-License-Identifier: Apache-2.0
+cc_library_static {
+    name: "liblenovo_gamepolicy",
+    vendor: true,
+    host_supported: true,
+    srcs: ["Policy.cpp"],
+    shared_libs: ["libtinyxml2"],
+    export_include_dirs: ["."],
+    cflags: ["-Wall", "-Wextra", "-Werror", "-fexceptions"],
+    cpp_std: "c++17",
+}
+
+cc_binary {
+    name: "vendor.lenovo.game-policy",
+    vendor: true,
+    compile_multilib: "64",
+    srcs: ["service.cpp"],
+    static_libs: ["liblenovo_gamepolicy"],
+    shared_libs: [
+        "io.github.miner7222.gamepolicy-V1-ndk",
+        "libbinder_ndk", "libbase", "liblog", "libdl", "libtinyxml2",
+    ],
+    init_rc: ["vendor.lenovo.game-policy.rc"],
+    vintf_fragments: ["manifest.xml"],
+    cflags: ["-Wall", "-Wextra", "-Werror", "-fexceptions"],
+    cpp_std: "c++17",
+}
+
+cc_binary_host {
+    name: "lenovo-gamepolicy-check",
+    srcs: ["tests/PolicyTest.cpp"],
+    static_libs: ["liblenovo_gamepolicy"],
+    shared_libs: ["libtinyxml2"],
+    cflags: ["-Wall", "-Wextra", "-Werror", "-fexceptions"],
+    cpp_std: "c++17",
+}

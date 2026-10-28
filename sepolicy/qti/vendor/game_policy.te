@@ -1,0 +1,24 @@
+# SPDX-License-Identifier: Apache-2.0
+type vendor_game_policy, domain;
+# App proc identity carries per-user MLS categories; only the explicit proc read
+# permissions below cross that boundary. This does not grant app-data access.
+typeattribute vendor_game_policy mlstrustedsubject;
+type vendor_game_policy_exec, exec_type, vendor_file_type, file_type;
+init_daemon_domain(vendor_game_policy)
+hal_server_domain(vendor_game_policy, hal_game_policy)
+binder_use(vendor_game_policy)
+# libqti-perfd-client talks to the existing perf arbiter; no frequency writes here.
+hal_client_domain(vendor_game_policy, vendor_hal_perf)
+set_prop(vendor_game_policy, vendor_lenovo_game_thermal_case_prop)
+# Init owns thermal/control and daemon restart, including crash cleanup.
+set_prop(vendor_init, vendor_lenovo_game_thermal_case_prop)
+# Discover quiet-therm and read its millidegree samples; read the runtime OPP tables.
+r_dir_file(vendor_game_policy, sysfs_thermal)
+r_dir_file(vendor_game_policy, sysfs_devices_system_cpu)
+r_dir_file(vendor_game_policy, vendor_sysfs_kgsl)
+allow vendor_game_policy sysfs:dir r_dir_perms;
+allow vendor_game_policy sysfs:lnk_file read;
+# Read only game UID/start-time/death identity, without affinity or scheduling rights.
+allow vendor_game_policy proc:dir search;
+allow vendor_game_policy appdomain:dir { search getattr };
+allow vendor_game_policy appdomain:file { open read getattr };

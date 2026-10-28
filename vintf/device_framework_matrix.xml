@@ -98,10 +98,18 @@
         </interface>
     </hal>
     <hal format="aidl" optional="true">
+        <name>io.github.miner7222.gamepolicy</name>
+        <version>1</version>
+    <hal format="aidl" optional="true">
         <name>vendor.lenovo.hardware.touchpolicy</name>
         <version>1</version>
         <interface>
             <name>ITouchPolicy</name>
+            <instance>default</instance>
+        </interface>
+    </hal>
+        <interface>
+            <name>IGamePolicy</name>
             <instance>default</instance>
         </interface>
     </hal>
