@@ -68,16 +68,18 @@ class Perf {
     ~Perf() { release(); if (mLibrary) dlclose(mLibrary); }
     void release() {
         if (mHandle > 0 && mRelease) mRelease(mHandle);
-        mHandle = 0; mArgs.clear();
+        mHandle = 0; mArgs.clear(); mLease.reset();
     }
     void apply(const std::vector<int>& args) {
         if (args != mArgs) release();
         if (args.empty() || !mAcquire || !mRelease) return;
+        const auto now = nowMs();
+        if (mHandle > 0 && !mLease.due(now)) return;
         auto writable = args;
-        // Renew every sample; even a crash cannot leave a persistent frequency lock.
+        // A stable request renews after two seconds; crash expiry remains three seconds.
         const int handle = mAcquire(mHandle, 3000, writable.data(), writable.size());
         if (handle <= 0) { LOG(ERROR) << "perf_lock_acq failed: " << handle; release(); return; }
-        mHandle = handle; mArgs = args;
+        mHandle = handle; mArgs = args; mLease.acquired(now);
     }
   private:
     using Acquire = int (*)(int, int, int*, int);
@@ -87,6 +89,7 @@ class Perf {
     Release mRelease = nullptr;
     int mHandle = 0;
     std::vector<int> mArgs;
+    PerfLease mLease;
 };
 } // namespace
 
@@ -123,15 +126,23 @@ class Service final : public BnGamePolicy {
                 mSession->packageName == session.packageName &&
                 mSession->processStartTimeTicks == session.processStartTimeTicks;
         const bool same = sameProcess && mSession->mode == session.mode;
+        mSelection = mPolicy.select(session.packageName, session.mode);
+        if (same) {
+            // A replacement generation must not inherit the preceding scene or boost.
+            mScene.reset();
+            mFps.invalidate();
+            mJank.cancel();
+        }
         if (!same) {
             clear(false, !sameProcess);
             if (!sameProcess) {
                 const auto now = nowMs();
-                mGate.start(now, mPolicy.select(session.packageName, session.mode).mode->delayMs);
+                mGate.start(now, mSelection.mode->delayMs);
                 mFps.reset(now);
+                mJank.reset();
             } else {
                 mGate.modeChanged();
-                mFps.cancel();
+                mFps.invalidate();
             }
             LOG(INFO) << "Game session uid=" << session.uid << " pid=" << session.pid
                       << " package=" << session.packageName << " mode=" << session.mode;
@@ -149,37 +160,98 @@ class Service final : public BnGamePolicy {
         return ndk::ScopedAStatus::ok();
     }
     ndk::ScopedAStatus reportFps(int64_t generation, float fps, const ndk::SpAIBinder& client) override {
+        return handleFrame(generation, fps, 0, 0, false, client, false);
+    }
+    ndk::ScopedAStatus reportFrame(int64_t generation, float fps, int32_t appJankFrames,
+                                  int32_t totalFrames, bool layerChanged,
+                                  const ndk::SpAIBinder& client) override {
+        return handleFrame(generation, fps, appJankFrames, totalFrames, layerChanged, client, true);
+    }
+    // Precise reports come from the compositor's game layer; others from the task frame rate.
+    ndk::ScopedAStatus handleFrame(int64_t generation, float fps, int32_t appJankFrames,
+                                   int32_t totalFrames, bool layerChanged,
+                                   const ndk::SpAIBinder& client, bool precise) {
         if (AIBinder_getCallingUid() != 1000) return ndk::ScopedAStatus::fromExceptionCode(EX_SECURITY);
         std::lock_guard lock(mMutex);
         if (!mSession || generation != mGeneration || client.get() != mClient.get())
             return ndk::ScopedAStatus::ok();
-        update(); // Verify identity, gate and current temperature before boosting its row.
-        const auto now = nowMs();
-        if (!mSession || !mGate.ready(now) || mSensorFailed || mBand < 0)
+        if (!std::isfinite(fps) || fps < 0 || appJankFrames < 0 || totalFrames < 0 || appJankFrames > totalFrames)
             return ndk::ScopedAStatus::ok();
-        const auto selection = mPolicy.select(mSession->packageName, mSession->mode);
-        ++mFpsSamples;
+        if (layerChanged) { mFps.invalidate(); mJank.cancel(); }
+        const auto now = nowMs();
+        // Generation/client bind this report to the cached process lifetime. The
+        // sample loop owns /proc validation and retires an exited/recycled process.
+        if (mVerifiedStart != mSession->processStartTimeTicks || now - mVerifiedAt > 1500 ||
+            !mGate.ready(now) || mSensorFailed || mBand < 0)
+            return ndk::ScopedAStatus::ok();
+        const auto& selection = mSelection;
+        ++(precise ? mFpsSamples : mFallbackSamples);
         LOG(VERBOSE) << "Game fps=" << fps;
-        if (mFps.sample(now, fps, Policy::fpsEnabled(*selection.mode, selection.profile))) {
+        if (mFps.sample(now, fps, !mScene.active(now) &&
+                Policy::fpsEnabled(*selection.mode, selection.profile, mScene.scene()))) {
             ++mFpsBoosts;
-            mPerf.apply(Policy::resources(*selection.mode, mBand, true));
+            mJank.cancel();
+            applyRequest(Policy::resources(*selection.mode, mBand, true), now);
             mWake.notify_one();
+        } else if (mJank.sample(now, appJankFrames, totalFrames,
+                Policy::jankEnabled(*selection.mode, selection.profile, mScene.scene()),
+                mScene.active(now) || mFps.active(now))) {
+            ++mJankBoosts;
+            applyRequest(Policy::resources(*selection.mode, mBand, false, true), now);
+            mWake.notify_one();
+        } else if (layerChanged) {
+            applyCached();
         }
         if (now - mFpsLogTime >= 30000) {
-            LOG(INFO) << "Game FPS feedback samples=" << mFpsSamples << " boosts=" << mFpsBoosts;
-            mFpsLogTime = now; mFpsSamples = 0; mFpsBoosts = 0;
+            LOG(INFO) << "Game FPS feedback samples=" << mFpsSamples << " fallback_samples=" << mFallbackSamples
+                      << " boosts=" << mFpsBoosts << " jank_boosts=" << mJankBoosts;
+            mFpsLogTime = now; mFpsSamples = 0; mFallbackSamples = 0; mFpsBoosts = 0; mJankBoosts = 0;
         }
+        return ndk::ScopedAStatus::ok();
+    }
+    ndk::ScopedAStatus reportScene(int64_t generation, int32_t scene, const ndk::SpAIBinder& client) override {
+        if (AIBinder_getCallingUid() != 1000) return ndk::ScopedAStatus::fromExceptionCode(EX_SECURITY);
+        std::lock_guard lock(mMutex);
+        if (!mSession || generation != mGeneration || client.get() != mClient.get() || scene < 0 || scene > 100000)
+            return ndk::ScopedAStatus::ok();
+        const auto& selection = mSelection;
+        const auto now = nowMs();
+        const bool changed = mScene.report(now, scene, *selection.mode);
+        if (changed) mFps.invalidate();
+        else if (mScene.active(now)) mFps.cancel();
+        if (changed || mScene.active(now)) mJank.cancel();
+        if (mVerifiedStart == mSession->processStartTimeTicks &&
+            now - mVerifiedAt < mPolicy.overlay.sampleMs && now < mNextSample &&
+            !mSensorFailed && mBand >= 0 && static_cast<size_t>(mBand) < selection.mode->bands.size() &&
+            (mWasReady || !mGate.ready(now))) {
+            if (!mGate.ready(now) && !mScene.active(now)) releaseRequest();
+            else applyRequest(mScene.resources(now, *selection.mode, mBand,
+                    mFps.active(now), mJank.active(now)), now);
+        } else update();
+        if (changed) LOG(INFO) << "Game profile=" << selection.profile << " scene=" << scene
+                              << " scene_row_applied=" << mScene.active(nowMs());
+        mWake.notify_one();
         return ndk::ScopedAStatus::ok();
     }
     void run() {
         std::unique_lock lock(mMutex);
         for (;;) {
+            if (!mSession) { mWake.wait(lock); continue; }
             const auto now = nowMs();
-            int64_t deadline = now + mPolicy.overlay.sampleMs;
+            if (mRequestExpiry.due(now)) { applyCached(); continue; }
+            int64_t deadline = mNextSample;
             if (mSession && !mGate.ready(now)) deadline = std::min(deadline, mGate.deadline());
-            if (mFps.active(now)) deadline = std::min(deadline, mFps.deadline());
-            mWake.wait_until(lock, std::chrono::steady_clock::time_point(std::chrono::milliseconds(deadline)));
-            update();
+            deadline = mRequestExpiry.limit(deadline);
+            const auto scan = mThreads.deadline();
+            if (scan && mGate.ready(now)) deadline = std::min(deadline, *scan);
+            if (mWake.wait_until(lock, std::chrono::steady_clock::time_point(std::chrono::milliseconds(deadline)))
+                    != std::cv_status::timeout) continue;
+            if (mRequestExpiry.due(nowMs())) { applyCached(); continue; }
+            if (nowMs() >= mNextSample || (!mWasReady && mGate.ready(nowMs()))) update();
+            else {
+                if (scan && nowMs() >= *scan && mGate.ready(nowMs())) applyThreads();
+                if (mRequestExpiry.due(nowMs())) applyCached();
+            }
         }
     }
   private:
@@ -191,8 +263,11 @@ class Service final : public BnGamePolicy {
         mClient = client; mGeneration = 0; return true;
     }
     void clear(bool resetCase = true, bool resetThreads = true) {
-        mPerf.release(); mSession.reset(); mBand = -1;
-        mFps.cancel();
+        releaseRequest(); mSession.reset(); mBand = -1;
+        mVerifiedStart = 0;
+        mFps.invalidate();
+        mJank.cancel();
+        mScene.reset();
         if (resetThreads) mThreads.clear();
         mLoggedMode = nullptr;
         if (resetCase) setCase(0);
@@ -224,39 +299,66 @@ class Service final : public BnGamePolicy {
         return milli / 1000.0;
     }
     void update() {
+        mNextSample = nowMs() + mPolicy.overlay.sampleMs;
         if (!mSession) { mThreads.clear(); setCase(0); return; }
         const auto start = identity(mSession->pid, mSession->uid);
         if (!start || *start != mSession->processStartTimeTicks) { LOG(INFO) << "Game process exited"; clear(); return; }
-        const auto selection = mPolicy.select(mSession->packageName, mSession->mode);
-        if (!mGate.ready(nowMs())) {
-            mPerf.release(); mThreads.clear(); setCase(0); return;
+        mVerifiedStart = *start; mVerifiedAt = nowMs();
+        const auto& selection = mSelection;
+        const bool ready = mGate.ready(nowMs());
+        mWasReady = ready;
+        if (!ready && !mScene.active(nowMs())) {
+            releaseRequest(); mThreads.clear(); setCase(0); return;
         }
-        const bool threadsChanged = mThreads.apply(mSession->pid, *start, *selection.mode,
-                                                  selection.threadPlacement);
-        if (threadsChanged || mLoggedMode != selection.mode) {
-            LOG(INFO) << "Game rule set tids_bound=" << mThreads.bound() << " tids_rt=" << mThreads.realtime()
-                      << " perf_hint_pairs=" << selection.mode->perfHints.size();
-            mLoggedMode = selection.mode;
-        }
+        // Scene requests are immediate; DelayTime continues to gate the normal policy.
+        if (!ready) mThreads.clear();
+        if (ready) applyThreads();
         const auto before = std::chrono::steady_clock::now();
         auto temp = temperature();
         const auto age = std::chrono::duration_cast<std::chrono::milliseconds>(
                 std::chrono::steady_clock::now() - before).count();
         const auto decision = Policy::evaluate(*selection.mode, temp, age, mBand, mPolicy.overlay.hysteresis);
-        setCase(decision.thermalCase);
+        setCase(ready ? decision.thermalCase : 0);
         if (!temp || age > 1500) {
             if (!mSensorFailed) LOG(WARNING) << "Invalid/stale game temperature; releasing frequency request";
-            mSensorFailed = true; mPerf.release(); mFps.cancel(); mBand = -1; return;
+            mSensorFailed = true; releaseRequest(); mFps.invalidate(); mJank.cancel(); mScene.cancel(); mBand = -1; return;
         }
         mSensorFailed = false;
         const int next = decision.band;
         if (next != mBand) LOG(INFO) << "Game profile=" << selection.profile << " band=" << next
                                     << " temperature=" << *temp << " case=" << selection.mode->thermalCase;
-        if (next != mBand) mFps.cancel();
+        if (next != mBand) { mFps.invalidate(); mJank.cancel(); }
         mBand = next;
-        mPerf.apply(mFps.active(nowMs()) ? Policy::resources(*selection.mode, mBand, true) : decision.resources);
+        const auto now = nowMs();
+        if (!mGate.ready(now) && !mScene.active(now)) { releaseRequest(); return; }
+        applyRequest(mScene.active(now) || mFps.active(now) || mJank.active(now) ?
+                mScene.resources(now, *selection.mode, mBand, mFps.active(now), mJank.active(now)) : decision.resources, now);
     }
+    void applyThreads() {
+        const bool threadsChanged = mThreads.apply(mSession->pid, mSession->processStartTimeTicks, *mSelection.mode,
+                                                           mSelection.threadPlacement, nowMs(), mPolicy.overlay.sampleMs);
+        if (threadsChanged || mLoggedMode != mSelection.mode) {
+            LOG(INFO) << "Game rule set tids_bound=" << mThreads.bound() << " tids_rt=" << mThreads.realtime()
+                      << " perf_hint_pairs=" << mSelection.mode->perfHints.size();
+            mLoggedMode = mSelection.mode;
+        }
+    }
+    void applyCached() {
+        const auto now = nowMs();
+        if (!mSession || mVerifiedStart != mSession->processStartTimeTicks ||
+            now - mVerifiedAt > 1500 || mSensorFailed ||
+            (!mGate.ready(now) && !mScene.active(now))) { releaseRequest(); return; }
+        applyRequest(mScene.resources(now, *mSelection.mode, mBand, mFps.active(now), mJank.active(now)), now);
+    }
+    void releaseRequest() { mRequestExpiry.set(0); mPerf.release(); }
+    void applyRequest(const std::vector<int>& args, int64_t now) {
+        mRequestExpiry.set(mScene.active(now) ? mScene.deadline() :
+                mFps.active(now) ? mFps.deadline() : mJank.active(now) ? mJank.deadline() : 0);
+        mPerf.apply(args);
+    }
+    RequestExpiry mRequestExpiry;
     Policy mPolicy;
+    Selection mSelection{nullptr, {}, true};
     Perf mPerf;
     Threads mThreads;
     std::mutex mMutex;
@@ -265,10 +367,15 @@ class Service final : public BnGamePolicy {
     ndk::SpAIBinder mClient;
     AIBinder_DeathRecipient* mDeath;
     int64_t mGeneration = 0;
+    int64_t mVerifiedStart = 0, mVerifiedAt = 0;
+    int64_t mNextSample = 0;
+    bool mWasReady = false;
     SessionGate mGate;
     FpsController mFps;
+    SceneController mScene;
+    JankController mJank;
     int64_t mFpsLogTime = nowMs();
-    uint64_t mFpsSamples = 0, mFpsBoosts = 0;
+    uint64_t mFpsSamples = 0, mFallbackSamples = 0, mFpsBoosts = 0, mJankBoosts = 0;
     const Mode* mLoggedMode = nullptr;
     std::string mSensor;
     int mCase = -1, mBand = -1;
@@ -304,7 +411,8 @@ int main(int argc, char** argv) {
     }
     policy.resolve(opps, coreCounts);
     for (const auto& diagnostic : policy.diagnostics) LOG(WARNING) << diagnostic;
-    LOG(INFO) << "Loaded game policy " << policy.version << ", " << policy.games.size() << " packages";
+    LOG(INFO) << "Loaded game policy " << policy.version << ", " << policy.games.size()
+              << " packages, " << policy.sceneLists.size() << " scene metadata profiles";
     ABinderProcess_setThreadPoolMaxThreadCount(1);
     auto service = ndk::SharedRefBase::make<gamepolicy::Service>(std::move(policy), std::move(threads));
     const std::string name = std::string(gamepolicy::Service::descriptor) + "/default";

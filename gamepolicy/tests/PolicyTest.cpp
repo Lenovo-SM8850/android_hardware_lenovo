@@ -61,10 +61,8 @@ void real(const char* stock, const char* overlay) {
     }
     require(sceneRows == (policy.version == "20260907" ? 42 : 108), "Unexpected real scene row count");
     require(policy.sceneLists.size() == 2 && metadata > 20, "SceneList metadata missing");
-    const auto pubg = policy.select("com.pubg.krmobile", 1);
-    const auto sgame = policy.select("com.levelinfinite.sgameGlobal", 1);
-    require(pubg.profile == "com.tencent.tmgp.pubgmhd" && sgame.profile == "com.tencent.tmgp.sgame",
-            "Scene-gated aliases changed");
+    const auto pubg = policy.select("com.tencent.tmgp.pubgmhd", 1);
+    const auto sgame = policy.select("com.tencent.tmgp.sgame", 1);
     require(pubg.mode->scenes.size() == (policy.version == "20260907" ? 5 : 16) &&
             sgame.mode->scenes.size() == 2, "SceneOpt profile row counts");
     std::cout << "SCENE_COUNTS version=" << policy.version << " profile_rows=" << pubg.mode->scenes.size() + 2
@@ -148,9 +146,8 @@ void real(const char* stock, const char* overlay) {
         }
         for (int id : {1, 2, 3, 0, 4}) {
             auto selected = policy.select(pkg, id);
-            const auto alias = policy.overlay.aliases.find(pkg);
-            require(selected.profile == (alias == policy.overlay.aliases.end() ? pkg : alias->second.profile) && selected.mode,
-                    "Real package or overriding alias did not resolve");
+            require(selected.profile == pkg && selected.mode && selected.threadPlacement,
+                    "Real stock package did not take precedence");
             require(!selected.mode->bands.empty(), "Real game has no frequency bands");
             for (double temperature : {20.0, 40.0, 42.0, 45.0, 47.0, 65.0}) {
                 auto band = Policy::band(*selected.mode, temperature, -1, 1);
@@ -168,8 +165,10 @@ void real(const char* stock, const char* overlay) {
     auto fallback = policy.select("default", 999);
     require(fallback.mode == policy.select("default", 1).mode, "Unmapped mode fallback");
     for (const auto& [pkg, alias] : policy.overlay.aliases) {
+        if (policy.games.count(pkg)) continue;
         const auto selected = policy.select(pkg, 2);
-        require(selected.profile == alias.profile, "Real alias did not resolve to its own profile");
+        require(selected.profile == alias.profile && selected.threadPlacement == alias.threadPlacement,
+                "Real fallback alias did not resolve to its profile and flag");
     }
     std::cout << "REAL_POLICY_OK version=" << policy.version << " packages=" << policy.games.size()
               << " modes=" << modes << " clamped=" << clamped << " aliases=" << policy.overlay.aliases.size()
@@ -220,7 +219,7 @@ void synthetic(const std::filesystem::path& directory) {
       <resource name="Prime" ceiling="2500000" opps="unused"/>
       <resource name="Gpu" ceiling="900000000" opps="unused"/></safety>)";
     write(overlay, header + R"(<alias pkg="global" profile="game.cn" threadPlacement="false"/>
-      <alias pkg="game.one" profile="default"/><alias pkg="removed" profile="no.such.game"/>
+      <alias pkg="game.one" profile="default" threadPlacement="false"/><alias pkg="removed" profile="no.such.game"/>
       <alias pkg="game.two" profile="no.such.game"/><alias pkg="chain" profile="game.one"/></game-policy>)");
     const auto chainOverlay = directory / "overlay-chain.xml";
     write(chainOverlay, header + R"(<alias pkg="chain" profile="game.one"/><alias pkg="game.one" profile="default"/></game-policy>)");
@@ -230,7 +229,8 @@ void synthetic(const std::filesystem::path& directory) {
     require(policy.select("removed", 1).profile == "default", "Dangling alias fallback");
     require(policy.select("game.two", 1).profile == "game.two", "Dangling alias discarded direct stock package");
     require(policy.select("global", 2).profile == "game.cn" && !policy.select("global", 2).threadPlacement, "Alias or flag ignored");
-    require(policy.select("game.one", 1).profile == "default", "Alias did not override direct stock package");
+    require(policy.select("game.one", 1).profile == "game.one" && policy.select("game.one", 1).threadPlacement,
+            "Alias displaced direct stock package or its thread placement");
     require(policy.select("game.two", 2).mode == policy.select("game.two", 1).mode, "Missing per-game mode fallback");
     require(error.find("Chained alias chain -> game.one") != std::string::npos && policy.select("chain", 1).profile == "default",
             "Alias chain accepted or followed");
@@ -239,6 +239,17 @@ void synthetic(const std::filesystem::path& directory) {
             chainError.find("Chained alias") != std::string::npos &&
             std::any_of(chained.diagnostics.begin(), chained.diagnostics.end(), [](const auto& d) { return d.find("Chained alias") != std::string::npos; }),
             "Alias chain must load nonfatally with a diagnostic");
+    const auto shadowedOverlay = directory / "overlay-shadowed.xml";
+    write(shadowedOverlay, header + R"(<alias pkg="game.one" profile="default" threadPlacement="false"/></game-policy>)");
+    Policy shadowed; std::string shadowedError;
+    require(shadowed.load(stock, shadowedOverlay, &shadowedError) && shadowed.aliasesValid(&shadowedError) &&
+            shadowedError.find("Shadowed alias game.one -> default") != std::string::npos &&
+            std::any_of(shadowed.diagnostics.begin(), shadowed.diagnostics.end(), [](const auto& d) {
+                return d.find("Shadowed alias game.one -> default") != std::string::npos;
+            }), "Shadowed alias must remain valid with a diagnostic");
+    require(shadowed.select("game.one", 1).profile == "game.one" && shadowed.select("game.one", 1).threadPlacement,
+            "Shadowed alias changed stock selection or thread placement");
+    std::cout << "ALIAS_PRECEDENCE_OK own-stock fallback-alias thread-placement dangling chained shadowed-warning\n";
     require(policy.select("game.two", 1).mode->thermalCase == 400, "Thermal case 400 rejected");
     require(policy.select("default", 2).mode->thermalCase == 300 && policy.select("default", 3).mode->thermalCase == 100, "Mode mapping");
     const auto& mode = *policy.select("default", 1).mode;
@@ -479,6 +490,26 @@ void scenes(const std::filesystem::path& directory) {
         for (int id : {1, 5, 7, 6, 106})
             require(Policy::fpsEnabled(mode, profile, id) == (id == 7), "SGAME scene FPS gate");
     }
+    for (const auto& profile : {"com.tencent.tmgp.pubgmhd", "com.tencent.tmgp.sgame"}) {
+        Policy profiles = policy;
+        profiles.games[profile] = {{"Balance", mode}};
+        profiles.games["global.own"] = {{"Balance", mode}};
+        profiles.overlay.aliases["global.own"] = {profile, false};
+        profiles.overlay.aliases["global.fallback"] = {profile, false};
+        const auto own = profiles.select("global.own", 1);
+        const auto fallback = profiles.select("global.fallback", 1);
+        const int enabledScene = std::string(profile) == "com.tencent.tmgp.pubgmhd" ? 103 : 7;
+        require(own.profile == "global.own" && Policy::fpsEnabled(*own.mode, own.profile) &&
+                Policy::jankEnabled(*own.mode, own.profile), "Own stock entry inherited alias scene gates");
+        require(fallback.profile == profile && !Policy::fpsEnabled(*fallback.mode, fallback.profile) &&
+                !Policy::jankEnabled(*fallback.mode, fallback.profile) &&
+                !Policy::fpsEnabled(*fallback.mode, fallback.profile, 1) &&
+                !Policy::jankEnabled(*fallback.mode, fallback.profile, 1) &&
+                Policy::fpsEnabled(*fallback.mode, fallback.profile, enabledScene) &&
+                Policy::jankEnabled(*fallback.mode, fallback.profile, enabledScene),
+                "Fallback alias did not use resolved profile scene gates");
+    }
+    std::cout << "ALIAS_SCENE_GATES_OK own-stock ungated fallback PUBG/SGAME FPS/jank gated\n";
     require(scene.report(100, 1, mode) && scene.active(1099) && !scene.active(1100), "Scene apply/expire boundary");
     require(!scene.report(200, 1, mode) && scene.deadline() == 1200, "Repeated scene failed to refresh its row");
     auto expected = Policy::resources(row);

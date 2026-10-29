@@ -1,0 +1,11 @@
+// SPDX-License-Identifier: Apache-2.0
+android_app {
+    name: "GameScene",
+    srcs: ["src/**/*.java"],
+    certificate: "platform",
+    platform_apis: true,
+    system_ext_specific: true,
+    optimize: {
+        enabled: false,
+    },
+}
