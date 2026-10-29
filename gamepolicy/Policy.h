@@ -48,6 +48,7 @@ class Policy {
     bool aliasesValid(std::string* error) const;
     static size_t band(const Mode& mode, double temperature, int previous, double hysteresis);
     static std::vector<int> resources(const Band& band);
+    static std::vector<int> resources(const Mode& mode, int band);
     static uint64_t mask(const std::string& text);
     static Decision evaluate(const Mode& mode, std::optional<double> temperature,
                              int64_t sampleAgeMs, int previous, double hysteresis);

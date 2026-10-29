@@ -35,6 +35,34 @@ void real(const char* stock, const char* overlay) {
     require(policy.load(stock, overlay, &error), error.c_str());
     require(policy.aliasesValid(&error), "Device overlay contains dangling alias");
     const Policy unresolved = policy;
+    size_t hints = 0, bound = 0, rt = 0, delays = 0;
+    std::map<int, size_t> accepted, dropped;
+    for (const auto& [pkg, modes] : policy.games) for (const auto& [name, mode] : modes) {
+        hints += mode.perfHints.size(); bound += mode.bindCore.size(); rt += mode.schedulers.size();
+        delays += mode.delayMs > 0;
+        for (const auto& hint : mode.perfHints) {
+            ++accepted[hint.opcode];
+            require((hint.opcode == 0x40CAC000 && hint.value >= 0 && hint.value <= 100) ||
+                    hint.opcode == 0x42800000, "Unallowlisted real hint");
+        }
+    }
+    for (const auto& diagnostic : policy.diagnostics) {
+        auto pos = diagnostic.find("/PerfHint 0x");
+        if (pos != std::string::npos) ++dropped[std::stoi(diagnostic.substr(pos + 10), nullptr, 16)];
+    }
+    require(hints > 100 && bound > 200 && rt >= 6 && delays >= 3, "Missing phase 2 real coverage");
+    if (policy.version == "20260907")
+        require(hints == 198 && bound == 509 && rt == 102 && delays == 22, "Unexpected wuji phase 2 counts");
+    else if (policy.version == "20260721")
+        require(hints == 174 && bound == 385 && rt == 12 && delays == 10, "Unexpected baldur phase 2 counts");
+    require(dropped[0x41000000] > 0 && dropped[0x41000200] > 0, "Unmapped core resources accepted");
+    require(policy.version != "20260721" || dropped[0x40400000] > 0, "Unmapped extra resource accepted");
+    std::cout << "PHASE2_COUNTS version=" << policy.version << " perf_pairs=" << hints << " bind_rules=" << bound
+              << " rt_rules=" << rt << " delayed_modes=" << delays << '\n';
+    for (auto [opcode, count] : accepted)
+        std::cout << "PERF_ACCEPT opcode=0x" << std::hex << opcode << std::dec << " count=" << count << '\n';
+    for (auto [opcode, count] : dropped) if (count)
+        std::cout << "PERF_DROP opcode=0x" << std::hex << opcode << std::dec << " count=" << count << '\n';
     const auto actual = sample(stock);
     policy.resolve(actual);
     int clamped = 0;
@@ -56,7 +84,7 @@ void real(const char* stock, const char* overlay) {
         require(battery.bands.size() == 4 && battery.bands[0].temperature == 0, "Nap fixture changed");
         for (double temp : {42.0, 45.0, 90.0}) {
             require(Policy::band(battery, temp, -1, 1) == 2, "Nap Battery must use stock row 3 at >=42C");
-            require(Policy::evaluate(battery, temp, 0, -1, 1).resources == Policy::resources(battery.bands[2]),
+            require(Policy::evaluate(battery, temp, 0, -1, 1).resources == Policy::resources(battery, 2),
                     "Nap Battery requested the wrong stock row");
         }
     } else {
@@ -76,6 +104,9 @@ void real(const char* stock, const char* overlay) {
                 require(band < selected.mode->bands.size(), "Invalid real band selection");
                 auto args = Policy::resources(selected.mode->bands[band]);
                 require(args.size() % 2 == 0 && args.size() <= 12, "Invalid resource bundle");
+                const auto combined = Policy::evaluate(*selected.mode, temperature, 0, -1, 1).resources;
+                require(combined.size() == args.size() + 2 * selected.mode->perfHints.size() &&
+                        std::equal(args.begin(), args.end(), combined.begin()), "Real hint order/bundle");
             }
         }
         modes += definitions.size();
@@ -99,15 +130,31 @@ void synthetic(const std::filesystem::path& directory) {
       <cluster name="Prime" min="0x40800200" max="0x40804200">768000 2000000 3000000</cluster></CPU>
       <GPU><cluster name="Gpu" min="0x42804000" max="0x42808000">1000000000 800000000 600000000</cluster></GPU>
       </PreEnv><GamePolicy><Game pkg="default"><ThermalTempType>11</ThermalTempType>
+      <BindCore><tid name="Main">C0</tid></BindCore><DelayTime>5000</DelayTime>
       <Mode name="Balance"><ThermalSceneCode>200</ThermalSceneCode><Policy>
       <TempLevel temp="25"><item type="freq" name="Gold">1_2</item><item type="freq" name="Prime">2_-1</item><item type="freq" name="Gpu">2_0</item></TempLevel>
       <TempLevel temp="42"><item type="freq" name="Gold">-2_9</item></TempLevel>
       <TempLevel temp="45"><item type="freq" name="Gpu">19_1</item></TempLevel>
       <TempLevel temp="47"><item type="freq" name="Gpu">-1_9</item></TempLevel>
-      </Policy></Mode><Mode name="Savage"><ThermalSceneCode>300</ThermalSceneCode><Policy><TempLevel temp="0"/></Policy></Mode>
+      </Policy><PerfHint><opcode id="0x40CAC000" time="0">50</opcode><opcode id="0x42800000" time="0">1</opcode>
+      <opcode id="0x40CAC000" time="1">60</opcode><opcode id="0x12345678" time="0">1</opcode>
+      <opcode id="0x40CAC000" time="0">101</opcode><opcode id="0x42800000" time="0">3</opcode>
+      <opcode id="bad" time="0">1</opcode><opcode time="0">1</opcode></PerfHint>
+      <ThreadScheduler name="Thread-1" priority="95">1</ThreadScheduler>
+      <ThreadScheduler name="Thread-13" priority="99">1</ThreadScheduler>
+      <ThreadScheduler name="Disabled" priority="90">0</ThreadScheduler>
+      <ThreadScheduler name="Invalid" priority="89">1</ThreadScheduler>
+      <ThreadScheduler name="Invalid" priority="100">1</ThreadScheduler>
+      <ThreadScheduler name="Invalid" priority="95">2</ThreadScheduler>
+      </Mode><Mode name="Savage"><DelayTime>0</DelayTime><BindCore><tid name="Worker">3f</tid>
+      <tid name="Bad">0</tid><tid name="Bad">GG</tid><unknown/></BindCore>
+      <ThermalSceneCode>300</ThermalSceneCode><Policy><TempLevel temp="0"/></Policy></Mode>
       <Mode name="PowerSave"><ThermalSceneCode>100</ThermalSceneCode><Policy><TempLevel temp="0"/></Policy></Mode>
       <Mode name="Godlike"><ThermalSceneCode>400</ThermalSceneCode><Policy><TempLevel temp="nonsense"/></Policy></Mode></Game>
       <Game pkg="game.one, game.two, game.cn"><Mode name="Balance"><ThermalSceneCode>400</ThermalSceneCode><Policy><TempLevel temp="25"/></Policy></Mode></Game>
+      <Game pkg="hint.only"><Mode name="Balance"><PerfHint><opcode id="0x40CAC000" time="0">20</opcode></PerfHint></Mode></Game>
+      <Game pkg="order"><Mode name="Balance"><BindCore><tid name="Thread-1">3C</tid><tid name="Thread-13">70</tid>
+      <tid name="Thread-13">C0</tid></BindCore></Mode></Game>
       </GamePolicy></GameOptPolicy>)");
     const std::string header = R"(<game-policy version="1"><mode id="1" profile="Balance"/><mode id="2" profile="Savage"/><mode id="3" profile="PowerSave"/>
       <safety sensor="quiet-therm" hysteresisC="1" sampleMs="1000">
@@ -137,6 +184,30 @@ void synthetic(const std::filesystem::path& directory) {
     require(policy.select("game.two", 1).mode->thermalCase == 400, "Thermal case 400 rejected");
     require(policy.select("default", 2).mode->thermalCase == 300 && policy.select("default", 3).mode->thermalCase == 100, "Mode mapping");
     const auto& mode = *policy.select("default", 1).mode;
+    require(mode.perfHints.size() == 2 && mode.bindCore.size() == 1 && mode.bindCore[0].mask == 0xC0 &&
+            mode.schedulers.size() == 3 && mode.delayMs == 5000, "Phase 2 parse/inheritance");
+    const auto& savage = *policy.select("default", 2).mode;
+    require(savage.bindCore.size() == 1 && savage.bindCore[0].name == "Worker" && savage.delayMs == 0,
+            "Mode rules/delay did not override Game defaults");
+    require(policy.select("default", 3).mode->bindCore[0].name == "Main", "Game BindCore inheritance");
+    const auto& ordered = *policy.select("order", 1).mode;
+    require(ordered.bindCore.size() == 2 && ordered.bindCore[0].name == "Thread-13" && ordered.bindCore[0].mask == 0xC0,
+            "Source map ordering or duplicate-name replacement lost");
+    auto diagnostic = [&](const char* text) {
+        return std::any_of(policy.diagnostics.begin(), policy.diagnostics.end(), [&](const auto& d) {
+            return d.find(text) != std::string::npos;
+        });
+    };
+    require(diagnostic("Nonzero duration") && diagnostic("Unmapped resource") && diagnostic("Value out of range") &&
+            diagnostic("Invalid FIFO rule") && diagnostic("Invalid hexadecimal CPU mask") && diagnostic("Empty CPU mask"),
+            "Invalid phase 2 entries missing diagnostics");
+    require(Policy::mask("C0") == 192 && Policy::mask("0x3f") == 63 &&
+            Policy::mask("8000000000000000") == (uint64_t{1} << 63), "Hex mask encoding");
+    for (const auto& text : {"", "0", "-1", "+1", "xyz", "C0junk", "10000000000000000"}) {
+        bool rejected = false;
+        try { Policy::mask(text); } catch (const std::exception&) { rejected = true; }
+        require(rejected, "Invalid mask accepted");
+    }
     require(Policy::band(mode, 41.9, -1, 1) == 0, "Initial anchor");
     require(Policy::band(mode, 42, 0, 1) == 1, "Heating must tighten immediately");
     require(Policy::band(mode, 41, 1, 1) == 1, "Cooling hysteresis boundary");
@@ -162,6 +233,14 @@ void synthetic(const std::filesystem::path& directory) {
     require(resolved[3].bounds[2].ceiling == 3, "Bad GPU ceiling was not clamped independently");
     require(Policy::resources(resolved[0]) == std::vector<int>({0x40800000, 900, 0x40804000, 1500, 0x40800200, 2400, 0x40804200, 2400, 0x42804000, 3, 0x42808000, 1}), "Wrong QTI bundle");
     const auto& safeMode = *policy.select("default", 1).mode;
+    auto combined = Policy::resources(safeMode, 0);
+    auto frequencies = Policy::resources(resolved[0]);
+    require(std::equal(frequencies.begin(), frequencies.end(), combined.begin()) &&
+            combined.size() == frequencies.size() + 4 && combined[combined.size()-4] == 0x40CAC000 &&
+            combined.back() == 2, "Perf hints must follow frequency pairs and resolve GPU OPPs");
+    const auto hintOnly = Policy::evaluate(*policy.select("hint.only", 1).mode, 30.0, 0, -1, 1);
+    require(hintOnly.band == -1 && hintOnly.resources == std::vector<int>({0x40CAC000, 20}),
+            "Hint-only mode did not yield a lock bundle");
     auto valid = Policy::evaluate(safeMode, 45.0, 0, -1, 1);
     require(valid.thermalCase == 200 && !valid.resources.empty(), "Valid sample did not enable policy");
     for (auto invalid : {std::optional<double>{}, std::optional<double>{std::numeric_limits<double>::quiet_NaN()},
