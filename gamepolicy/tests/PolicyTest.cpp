@@ -61,10 +61,8 @@ void real(const char* stock, const char* overlay) {
     }
     require(sceneRows == (policy.version == "20260907" ? 42 : 108), "Unexpected real scene row count");
     require(policy.sceneLists.size() == 2 && metadata > 20, "SceneList metadata missing");
-    const auto pubg = policy.select("com.pubg.krmobile", 1);
-    const auto sgame = policy.select("com.levelinfinite.sgameGlobal", 1);
-    require(pubg.profile == "com.tencent.tmgp.pubgmhd" && sgame.profile == "com.tencent.tmgp.sgame",
-            "Scene-gated aliases changed");
+    const auto pubg = policy.select("com.tencent.tmgp.pubgmhd", 1);
+    const auto sgame = policy.select("com.tencent.tmgp.sgame", 1);
     require(pubg.mode->scenes.size() == (policy.version == "20260907" ? 5 : 16) &&
             sgame.mode->scenes.size() == 2, "SceneOpt profile row counts");
     std::cout << "SCENE_COUNTS version=" << policy.version << " profile_rows=" << pubg.mode->scenes.size() + 2
@@ -494,6 +492,26 @@ void scenes(const std::filesystem::path& directory) {
         for (int id : {1, 5, 7, 6, 106})
             require(Policy::fpsEnabled(mode, profile, id) == (id == 7), "SGAME scene FPS gate");
     }
+    for (const auto& profile : {"com.tencent.tmgp.pubgmhd", "com.tencent.tmgp.sgame"}) {
+        Policy profiles = policy;
+        profiles.games[profile] = {{"Balance", mode}};
+        profiles.games["global.own"] = {{"Balance", mode}};
+        profiles.overlay.aliases["global.own"] = {profile, false};
+        profiles.overlay.aliases["global.fallback"] = {profile, false};
+        const auto own = profiles.select("global.own", 1);
+        const auto fallback = profiles.select("global.fallback", 1);
+        const int enabledScene = std::string(profile) == "com.tencent.tmgp.pubgmhd" ? 103 : 7;
+        require(own.profile == "global.own" && Policy::fpsEnabled(*own.mode, own.profile) &&
+                Policy::jankEnabled(*own.mode, own.profile), "Own stock entry inherited alias scene gates");
+        require(fallback.profile == profile && !Policy::fpsEnabled(*fallback.mode, fallback.profile) &&
+                !Policy::jankEnabled(*fallback.mode, fallback.profile) &&
+                !Policy::fpsEnabled(*fallback.mode, fallback.profile, 1) &&
+                !Policy::jankEnabled(*fallback.mode, fallback.profile, 1) &&
+                Policy::fpsEnabled(*fallback.mode, fallback.profile, enabledScene) &&
+                Policy::jankEnabled(*fallback.mode, fallback.profile, enabledScene),
+                "Fallback alias did not use resolved profile scene gates");
+    }
+    std::cout << "ALIAS_SCENE_GATES_OK own-stock ungated fallback PUBG/SGAME FPS/jank gated\n";
     require(scene.report(100, 1, mode) && scene.active(1099) && !scene.active(1100), "Scene apply/expire boundary");
     require(!scene.report(200, 1, mode) && scene.deadline() == 1200, "Repeated scene failed to refresh its row");
     auto expected = Policy::resources(row);

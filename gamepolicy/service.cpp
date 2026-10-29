@@ -187,7 +187,8 @@ class Service final : public BnGamePolicy {
         const auto& selection = mSelection;
         ++(precise ? mFpsSamples : mFallbackSamples);
         LOG(VERBOSE) << "Game fps=" << fps;
-        if (mFps.sample(now, fps, Policy::fpsEnabled(*selection.mode, selection.profile), selection.mode->boostLengthMs)) {
+        if (mFps.sample(now, fps, !mScene.active(now) &&
+                Policy::fpsEnabled(*selection.mode, selection.profile, mScene.scene()), selection.mode->boostLengthMs)) {
             ++mFpsBoosts;
             mJank.cancel();
             applyRequest(Policy::resources(*selection.mode, mBand, true), now);
