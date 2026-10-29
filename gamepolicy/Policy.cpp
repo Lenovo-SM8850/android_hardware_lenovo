@@ -35,7 +35,66 @@ bool supported(const std::string& mode) {
     return mode == "Balance" || mode == "Savage" || mode == "PowerSave";
 }
 bool allowedCase(int code) { return code == 0 || code == 100 || code == 200 || code == 300 || code == 400; }
+
+std::string optionValue(const tinyxml2::XMLElement* e) {
+    if (!e->GetText()) throw std::runtime_error("Missing element text");
+    const std::string text = e->GetText();
+    const auto first = text.find_first_not_of(" \t\r\n");
+    if (first == std::string::npos) throw std::runtime_error("Missing element text");
+    return text.substr(first, text.find_last_not_of(" \t\r\n") - first + 1);
+}
+
+int64_t nameHash(const std::string& name) {
+    uint32_t hash = 0;
+    for (unsigned char c : name) hash = hash * 31 + c;
+    return hash & 0x80000000U ? static_cast<int64_t>(hash) - 0x100000000LL : hash;
+}
+
+void threadOptions(const tinyxml2::XMLElement* parent, Mode& mode,
+                   std::vector<std::string>& diagnostics, const std::string& context) {
+    auto attempt = [&](const tinyxml2::XMLElement* e, const auto& parse) {
+        try { parse(); }
+        catch (const std::exception& error) {
+            diagnostics.push_back(context + "/" + e->Name() + ": " + error.what());
+        }
+    };
+    for (auto e = parent->FirstChildElement(); e; e = e->NextSiblingElement()) {
+        const std::string kind = e->Name();
+        if (kind == "BindCore") {
+            for (auto tid = e->FirstChildElement(); tid; tid = tid->NextSiblingElement()) attempt(tid, [&] {
+                if (std::string(tid->Name()) != "tid") throw std::runtime_error("Unknown affinity entry");
+                const auto name = attr(tid, "name");
+                if (name.empty() || name.size() > 15) throw std::runtime_error("Invalid thread name");
+                const auto mask = Policy::mask(optionValue(tid));
+                auto prior = std::find_if(mode.bindCore.begin(), mode.bindCore.end(), [&](const auto& rule) { return rule.name == name; });
+                if (prior == mode.bindCore.end()) mode.bindCore.push_back({name, mask});
+                else prior->mask = mask;
+            });
+        } else if (kind == "ThreadScheduler") attempt(e, [&] {
+            const auto name = attr(e, "name");
+            const int priority = integer(attr(e, "priority")), enabled = integer(optionValue(e));
+            if (name.empty() || name.size() > 15 || priority < 90 || priority > 99 ||
+                (enabled != 0 && enabled != 1)) throw std::runtime_error("Invalid FIFO rule");
+            mode.schedulers.push_back({name, std::clamp(priority, 1, 99), enabled == 1});
+        });
+        else if (kind == "DelayTime") attempt(e, [&] {
+            const int delay = integer(optionValue(e));
+            if (delay < 0) throw std::runtime_error("Invalid delay");
+            mode.delayMs = delay;
+        });
+    }
+}
 } // namespace
+
+uint64_t Policy::mask(const std::string& text) {
+    const auto start = text.compare(0, 2, "0x") == 0 || text.compare(0, 2, "0X") == 0 ? 2 : 0;
+    if (text.size() <= static_cast<size_t>(start) || text.size() - start > 16 ||
+        text.find_first_not_of("0123456789abcdefABCDEF", start) != std::string::npos)
+        throw std::runtime_error("Invalid hexadecimal CPU mask");
+    const auto bits = std::stoull(text.substr(start), nullptr, 16);
+    if (!bits) throw std::runtime_error("Empty CPU mask");
+    return bits;
+}
 
 bool Policy::load(const std::string& stock, const std::string& overrides, std::string* error) {
     *this = Policy{};
@@ -100,6 +159,8 @@ bool Policy::load(const std::string& stock, const std::string& overrides, std::s
         if (!policies) throw std::runtime_error("Missing GamePolicy");
         for (auto game = policies->FirstChildElement("Game"); game; game = game->NextSiblingElement("Game")) {
             std::map<std::string, Mode> modes;
+            Mode defaults;
+            threadOptions(game, defaults, diagnostics, attr(game, "pkg"));
             auto sensor = game->FirstChildElement("ThermalTempType");
             if (sensor && integer(value(sensor)) != 11) throw std::runtime_error("Unsupported sensor type");
             for (auto m = game->FirstChildElement("Mode"); m; m = m->NextSiblingElement("Mode")) {
@@ -108,6 +169,15 @@ bool Policy::load(const std::string& stock, const std::string& overrides, std::s
                 auto ms = m->FirstChildElement("ThermalTempType");
                 if (ms && integer(value(ms)) != 11) throw std::runtime_error("Unsupported mode sensor");
                 Mode mode;
+                mode.delayMs = defaults.delayMs;
+                const auto context = attr(game, "pkg") + "/" + name;
+                threadOptions(m, mode, diagnostics, context);
+                if (mode.bindCore.empty()) mode.bindCore = defaults.bindCore;
+                // The source map iterates by signed string hash, with insertion order
+                // for collisions. This matters when broad names overlap specific ones.
+                std::stable_sort(mode.bindCore.begin(), mode.bindCore.end(), [](const auto& a, const auto& b) {
+                    return nameHash(a.name) < nameHash(b.name);
+                });
                 auto scene = m->FirstChildElement("ThermalSceneCode");
                 if (!scene) scene = game->FirstChildElement("ThermalSceneCode");
                 mode.thermalCase = scene ? integer(value(scene)) : 0;

@@ -1,12 +1,16 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "Policy.h"
+#include "Threads.h"
 #include <tinyxml2.h>
 #include <algorithm>
+#include <cerrno>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <iterator>
 #include <limits>
 #include <stdexcept>
+#include <sstream>
 
 using namespace gamepolicy;
 namespace {
@@ -176,6 +180,141 @@ void synthetic(const std::filesystem::path& directory) {
     require(Policy::resources(unavailable.select("default", 1).mode->bands[0]).empty(), "Missing OPPs must release all bounds");
     std::cout << "POLICY_TESTS_OK modes stock-bands hysteresis OPPs per-bound-clamp aliases sensor-failure-recovery\n";
 }
+void threadRules() {
+    require(bindMatches("xUnityMain", "UnityMain") && !schedulerMatches("xUnityMain", "UnityMain"), "Matcher distinction");
+    require(bindMatches("Thread-13", "Thread-1") && schedulerMatches("Thread-13", "Thread-1"), "Thread prefix semantics");
+    require(!bindMatches("Thread-1", "Thread-13") && !schedulerMatches("Thread-1", "Thread-13"), "Reverse thread prefix");
+    require(!bindMatches("Any", "") && !schedulerMatches("Any", ""), "Empty matcher");
+    Mode mode;
+    mode.bindCore = {{"Thread-1", 0xC0}, {"Thread-13", 0x3F}, {"Main", 0xFF}};
+    mode.schedulers = {{"Thread-1", 95, true}, {"Thread-13", 99, true}, {"Main", 90, false}};
+    const std::vector<Task> tasks = {{101, 10, "Thread-1"}, {102, 11, "Thread-13"}, {103, 12, "xMain"}, {104, 13, "Other"}};
+    auto desired = placements(tasks, mode, 0x7F);
+    require(desired.size() == 3 && desired[0].mask == 0x40 && desired[0].priority == 95 &&
+            desired[1].mask == 0x40 && desired[1].priority == 99 && desired[2].priority == 0,
+            "Rule precedence, possible CPU intersection or disabled scheduler");
+    require(placements(tasks, mode, 0x3F)[0].mask == 0 && placements({tasks[2]}, mode, 0).empty(), "Empty CPU intersection");
+    auto copy = mode;
+    copy.thermalCase = 400; copy.perfHints = {{0x40CAC000, 10}};
+    require(sameThreadRules(mode, copy), "Unrelated mode fields triggered thread restore");
+    copy.delayMs = 1; require(!sameThreadRules(mode, copy), "Delay diff missed"); copy = mode;
+    copy.bindCore[0].mask = 1; require(!sameThreadRules(mode, copy), "Mask diff missed"); copy = mode;
+    copy.schedulers[0].priority = 96; require(!sameThreadRules(mode, copy), "RT diff missed"); copy = mode;
+    copy.schedulers[0].enabled = false; require(!sameThreadRules(mode, copy), "Enable diff missed");
+    auto late = tasks; late.push_back({105, 14, "Thread-14"});
+    require(placements(late, mode, 0xFF).size() == desired.size() + 1, "Late thread was not discovered");
+    auto renamed = desired[0]; renamed.task.comm = "Thread-14";
+    require(!samePlacement(desired[0], renamed), "Renamed thread must restore before reapply");
+    renamed = desired[0]; ++renamed.task.start;
+    require(!samePlacement(desired[0], renamed) && samePlacement(desired[0], desired[0]), "Recycled TID diff missed");
+    require(placements({tasks[3]}, mode, 0xFF).empty(), "Unmatched thread selected");
+    std::cout << "THREAD_RULES_OK substring prefix Thread-1-vs-Thread-13 precedence late-tasks rename reuse diff\n";
+}
+void threadRecovery(const std::filesystem::path& directory) {
+    cpu_set_t possible; CPU_ZERO(&possible);
+    for (int i = 0; i < 8; ++i) CPU_SET(i, &possible);
+    CPU_SET(CPU_SETSIZE - 1, &possible);
+    auto equal = [](const cpu_set_t& a, const cpu_set_t& b) {
+        for (int i = 0; i < CPU_SETSIZE; ++i) if (CPU_ISSET(i, &a) != CPU_ISSET(i, &b)) return false;
+        return true;
+    };
+    ThreadOriginal original;
+    original.placement.task = {100, 123, "Mainloop"};
+    CPU_ZERO(&original.affinity); CPU_SET(6, &original.affinity);
+    original.policy = SCHED_RR; original.priority = 23;
+    original.bound = true;
+    int affinityCalls = 0, schedulerCalls = 0;
+    bool fallback;
+    auto affinity = [&](const cpu_set_t& mask) {
+        ++affinityCalls;
+        if (affinityCalls == 1) {
+            require(equal(mask, original.affinity), "Original affinity not attempted first");
+            return EINVAL;
+        }
+        require(equal(mask, possible), "Fallback must include all possible CPUs");
+        return 0;
+    };
+    auto scheduler = [&](int policy, int priority) {
+        ++schedulerCalls;
+        require(policy == original.policy && priority == original.priority, "Original scheduler values lost");
+        return 0;
+    };
+    require(restoreThreadState(original, possible, affinity, scheduler, &fallback) == 0 &&
+            fallback && affinityCalls == 2 && schedulerCalls == 0, "Cpuset fallback did not complete affinity-only restore");
+    for (int error : {EPERM, EACCES, ESRCH}) {
+        affinityCalls = 0;
+        const int result = restoreThreadState(original, possible, [&](const cpu_set_t&) {
+            ++affinityCalls; return error;
+        }, scheduler, &fallback);
+        require(result == (error == ESRCH ? 0 : error) && !fallback && affinityCalls == 1,
+                "Only EINVAL may trigger affinity fallback; other errors must retain/retry");
+    }
+    affinityCalls = 0;
+    require(restoreThreadState(original, possible, [&](const cpu_set_t&) {
+        ++affinityCalls; return EINVAL;
+    }, scheduler, &fallback) == EINVAL && fallback && affinityCalls == 2, "Failed fallback must retain recovery entry");
+    original.bound = false; original.realtime = true;
+    affinityCalls = schedulerCalls = 0;
+    require(restoreThreadState(original, possible, affinity, scheduler, &fallback) == 0 &&
+            !fallback && affinityCalls == 0 && schedulerCalls == 1, "RT-only restore touched affinity");
+    require(restoreThreadState(original, possible, affinity, [](int, int) { return EPERM; }, &fallback) == EPERM,
+            "Scheduler error must retain recovery entry");
+    original.realtime = false;
+    affinityCalls = schedulerCalls = 0;
+    require(restoreThreadState(original, possible, affinity, scheduler, &fallback) == 0 &&
+            affinityCalls == 0 && schedulerCalls == 0, "Untouched state restored");
+
+    ThreadJournal journal;
+    std::ifstream("/proc/sys/kernel/random/boot_id") >> journal.bootId;
+    journal.pid = 7; journal.start = 1234;
+    for (int flags = 0; flags < 4; ++flags) {
+        original.bound = flags & 1; original.realtime = flags & 2;
+        original.placement.task.tid = 100 + flags;
+        journal.originals.push_back(original);
+    }
+    const auto path = directory / "threads-recovery";
+    const auto serialized = encodeThreadJournal(journal);
+    write(path, serialized);
+    std::ifstream input(path);
+    const std::string disk((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
+    ThreadJournal decoded;
+    require(decodeThreadJournal(disk, &decoded) == JournalStatus::Valid && decoded.pid == journal.pid &&
+            decoded.start == journal.start && decoded.bootId == journal.bootId && decoded.originals.size() == 4,
+            "Journal disk round trip failed");
+    for (size_t i = 0; i < decoded.originals.size(); ++i) {
+        const auto& before = journal.originals[i]; const auto& after = decoded.originals[i];
+        require(before.bound == after.bound && before.realtime == after.realtime && equal(before.affinity, after.affinity) &&
+                before.policy == after.policy && before.priority == after.priority &&
+                before.placement.task.tid == after.placement.task.tid && before.placement.task.start == after.placement.task.start,
+                "Journal lost flags or original state");
+        affinityCalls = schedulerCalls = 0;
+        require(restoreThreadState(after, possible, [&](const cpu_set_t&) { ++affinityCalls; return 0; },
+                scheduler, &fallback) == 0 && affinityCalls == (before.bound ? 1 : 0) && schedulerCalls == (before.realtime ? 1 : 0),
+                "Recovered flags did not restrict restoration");
+    }
+    for (const auto& version : {"1", "99"}) {
+        const auto unsupported = std::string(version) + serialized.substr(serialized.find(' '));
+        require(decodeThreadJournal(unsupported, &decoded) == JournalStatus::UnsupportedVersion && decoded.originals.empty(),
+                "Unsupported journal version accepted");
+        write(path, unsupported);
+        std::vector<std::string> warnings;
+        Threads executor([&](const auto& message) { warnings.push_back(message); }, [](const auto&) {}, path.string());
+        executor.recover();
+        require(warnings.size() == 1 && warnings[0].find("Unsupported thread recovery version") != std::string::npos,
+                "Unsupported journal not diagnosed");
+        std::ifstream replaced(path);
+        const std::string empty((std::istreambuf_iterator<char>(replaced)), std::istreambuf_iterator<char>());
+        require(decodeThreadJournal(empty, &decoded) == JournalStatus::Valid && decoded.originals.empty() && decoded.pid == 0,
+                "Unsupported journal not discarded safely");
+    }
+    auto invalidFlags = serialized;
+    const auto flag = invalidFlags.find(" 0 0 ", invalidFlags.find('\n'));
+    require(flag != std::string::npos, "Missing journal flag fixture");
+    invalidFlags[flag + 1] = '2';
+    require(decodeThreadJournal(invalidFlags, &decoded) == JournalStatus::Invalid && decoded.originals.empty(),
+            "Invalid journal flag accepted");
+    std::cout << "THREAD_RECOVERY_OK cpuset-fallback error-retention subset-restore journal-flags old-version-discard\n";
+}
 } // namespace
 int main(int argc, char** argv) {
     try {
@@ -183,6 +322,8 @@ int main(int argc, char** argv) {
         real(argv[1], argv[2]); real(argv[3], argv[4]);
         std::filesystem::create_directories(argv[5]);
         synthetic(argv[5]);
+        threadRules();
+        threadRecovery(argv[5]);
         return 0;
     } catch (const std::exception& e) { std::cerr << "FAIL " << e.what() << '\n'; return 1; }
 }
