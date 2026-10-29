@@ -15,6 +15,7 @@
 #include <chrono>
 #include <charconv>
 #include <cmath>
+#include <condition_variable>
 #include <mutex>
 #include <optional>
 #include <sstream>
@@ -25,6 +26,10 @@ using aidl::io::github::miner7222::gamepolicy::GameSession;
 using namespace std::chrono_literals;
 namespace gamepolicy {
 namespace {
+int64_t nowMs() {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now().time_since_epoch()).count();
+}
 std::string read(const std::string& path) {
     std::string data;
     if (!android::base::ReadFileToString(path, &data)) return {};
@@ -120,13 +125,19 @@ class Service final : public BnGamePolicy {
         const bool same = sameProcess && mSession->mode == session.mode;
         if (!same) {
             clear(false, !sameProcess);
-            if (!sameProcess) mSessionStart = std::chrono::steady_clock::now();
+            if (!sameProcess) {
+                const auto now = nowMs();
+                mGate.start(now, mPolicy.select(session.packageName, session.mode).mode->delayMs);
+            } else {
+                mGate.modeChanged();
+            }
             LOG(INFO) << "Game session uid=" << session.uid << " pid=" << session.pid
                       << " package=" << session.packageName << " mode=" << session.mode;
         }
         mSession = session;
         // Sample before the first request. Mode updates must not reuse a preceding band.
         update();
+        mWake.notify_one();
         return ndk::ScopedAStatus::ok();
     }
     ndk::ScopedAStatus stopSession(int64_t generation, const ndk::SpAIBinder& client) override {
@@ -136,9 +147,12 @@ class Service final : public BnGamePolicy {
         return ndk::ScopedAStatus::ok();
     }
     void run() {
+        std::unique_lock lock(mMutex);
         for (;;) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(mPolicy.overlay.sampleMs));
-            std::lock_guard lock(mMutex);
+            const auto now = nowMs();
+            int64_t deadline = now + mPolicy.overlay.sampleMs;
+            if (mSession && !mGate.ready(now)) deadline = std::min(deadline, mGate.deadline());
+            mWake.wait_until(lock, std::chrono::steady_clock::time_point(std::chrono::milliseconds(deadline)));
             update();
         }
     }
@@ -187,10 +201,11 @@ class Service final : public BnGamePolicy {
         const auto start = identity(mSession->pid, mSession->uid);
         if (!start || *start != mSession->processStartTimeTicks) { LOG(INFO) << "Game process exited"; clear(); return; }
         const auto selection = mPolicy.select(mSession->packageName, mSession->mode);
-        const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
-                std::chrono::steady_clock::now() - mSessionStart).count();
+        if (!mGate.ready(nowMs())) {
+            mPerf.release(); mThreads.clear(); setCase(0); return;
+        }
         const bool threadsChanged = mThreads.apply(mSession->pid, *start, *selection.mode,
-                                                  selection.threadPlacement, elapsed);
+                                                  selection.threadPlacement);
         if (threadsChanged || mLoggedMode != selection.mode) {
             LOG(INFO) << "Game rule set tids_bound=" << mThreads.bound() << " tids_rt=" << mThreads.realtime()
                       << " perf_hint_pairs=" << selection.mode->perfHints.size();
@@ -217,11 +232,12 @@ class Service final : public BnGamePolicy {
     Perf mPerf;
     Threads mThreads;
     std::mutex mMutex;
+    std::condition_variable mWake;
     std::optional<GameSession> mSession;
     ndk::SpAIBinder mClient;
     AIBinder_DeathRecipient* mDeath;
     int64_t mGeneration = 0;
-    std::chrono::steady_clock::time_point mSessionStart;
+    SessionGate mGate;
     const Mode* mLoggedMode = nullptr;
     std::string mSensor;
     int mCase = -1, mBand = -1;
@@ -249,7 +265,13 @@ int main(int argc, char** argv) {
         std::istringstream input(gamepolicy::read(policy.overlay.oppPaths[r]));
         int f; while (input >> f) opps[r].push_back(f);
     }
-    policy.resolve(opps);
+    std::array<int, 2> coreCounts{};
+    for (int r = 0; r < 2; ++r) {
+        const auto& path = policy.overlay.oppPaths[r];
+        coreCounts[r] = gamepolicy::coreCount(gamepolicy::read(path.substr(0, path.rfind('/')) + "/related_cpus"));
+        if (!coreCounts[r]) LOG(WARNING) << "Missing CPU topology for resource " << r;
+    }
+    policy.resolve(opps, coreCounts);
     for (const auto& diagnostic : policy.diagnostics) LOG(WARNING) << diagnostic;
     LOG(INFO) << "Loaded game policy " << policy.version << ", " << policy.games.size() << " packages";
     ABinderProcess_setThreadPoolMaxThreadCount(1);
