@@ -35,6 +35,9 @@ bool supported(const std::string& mode) {
     return mode == "Balance" || mode == "Savage" || mode == "PowerSave";
 }
 bool allowedCase(int code) { return code == 0 || code == 100 || code == 200 || code == 300 || code == 400; }
+// These resources map to carried cgroup and KGSL nodes on both targets.
+constexpr int kUclamp = 0x40CAC000;
+constexpr int kGpuDefault = 0x42800000;
 
 std::string optionValue(const tinyxml2::XMLElement* e) {
     if (!e->GetText()) throw std::runtime_error("Missing element text");
@@ -178,6 +181,23 @@ bool Policy::load(const std::string& stock, const std::string& overrides, std::s
                 std::stable_sort(mode.bindCore.begin(), mode.bindCore.end(), [](const auto& a, const auto& b) {
                     return nameHash(a.name) < nameHash(b.name);
                 });
+                for (auto hints = m->FirstChildElement("PerfHint"); hints; hints = hints->NextSiblingElement("PerfHint")) {
+                    for (auto opcode = hints->FirstChildElement(); opcode; opcode = opcode->NextSiblingElement()) {
+                        const std::string id = opcode->Attribute("id") ? opcode->Attribute("id") : "missing";
+                        try {
+                            if (std::string(opcode->Name()) != "opcode") throw std::runtime_error("Unknown hint entry");
+                            const int op = integer(id);
+                            if (op != kUclamp && op != kGpuDefault) throw std::runtime_error("Unmapped resource");
+                            if (integer(attr(opcode, "time")) != 0) throw std::runtime_error("Nonzero duration");
+                            const int n = integer(optionValue(opcode));
+                            const int max = op == kUclamp ? 100 : static_cast<int>(mDeclared[2].size()) - 1;
+                            if (n < 0 || n > max) throw std::runtime_error("Value out of range");
+                            mode.perfHints.push_back({op, n});
+                        } catch (const std::exception& e) {
+                            diagnostics.push_back(context + "/PerfHint " + id + ": " + e.what());
+                        }
+                    }
+                }
                 auto scene = m->FirstChildElement("ThermalSceneCode");
                 if (!scene) scene = game->FirstChildElement("ThermalSceneCode");
                 mode.thermalCase = scene ? integer(value(scene)) : 0;
@@ -247,6 +267,20 @@ void Policy::resolve(const Opps& actual) {
         std::sort(table.begin(), table.end());
         table.erase(std::unique(table.begin(), table.end()), table.end());
         if (r == 2) std::reverse(table.begin(), table.end());
+    }
+    for (auto& [pkg, modes] : games) for (auto& [name, mode] : modes) {
+        auto& hints = mode.perfHints;
+        const auto context = pkg + "/" + name;
+        hints.erase(std::remove_if(hints.begin(), hints.end(), [&](PerfHint& hint) {
+            if (hint.opcode != kGpuDefault) return false;
+            const int wanted = std::min(mDeclared[2][hint.value], overlay.ceilings[2]);
+            for (size_t i = 0; i < tables[2].size(); ++i) if (tables[2][i] <= wanted) {
+                hint.value = i;
+                return false;
+            }
+            diagnostics.push_back(context + "/PerfHint 0x42800000: No safe OPP");
+            return true;
+        }), hints.end());
     }
     for (auto& [pkg, modes] : games) for (auto& [name, mode] : modes) for (auto& b : mode.bands) {
         for (int r = 0; r < 3; ++r) {
@@ -332,8 +366,8 @@ Decision Policy::evaluate(const Mode& mode, std::optional<double> temperature,
     decision.thermalCase = mode.thermalCase;
     if (!mode.bands.empty()) {
         decision.band = band(mode, *temperature, previous, hysteresis);
-        decision.resources = resources(mode.bands[decision.band]);
     }
+    decision.resources = resources(mode, decision.band);
     return decision;
 }
 
@@ -343,6 +377,12 @@ std::vector<int> Policy::resources(const Band& band) {
         if (band.bounds[r].floor >= 0) { args.push_back(kMin[r]); args.push_back(band.bounds[r].floor); }
         if (band.bounds[r].ceiling >= 0) { args.push_back(kMax[r]); args.push_back(band.bounds[r].ceiling); }
     }
+    return args;
+}
+
+std::vector<int> Policy::resources(const Mode& mode, int band) {
+    auto args = band >= 0 && static_cast<size_t>(band) < mode.bands.size() ? resources(mode.bands[band]) : std::vector<int>{};
+    for (const auto& hint : mode.perfHints) { args.push_back(hint.opcode); args.push_back(hint.value); }
     return args;
 }
 } // namespace gamepolicy
