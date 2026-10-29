@@ -128,8 +128,10 @@ class Service final : public BnGamePolicy {
             if (!sameProcess) {
                 const auto now = nowMs();
                 mGate.start(now, mPolicy.select(session.packageName, session.mode).mode->delayMs);
+                mFps.reset(now);
             } else {
                 mGate.modeChanged();
+                mFps.cancel();
             }
             LOG(INFO) << "Game session uid=" << session.uid << " pid=" << session.pid
                       << " package=" << session.packageName << " mode=" << session.mode;
@@ -146,12 +148,36 @@ class Service final : public BnGamePolicy {
         if (client.get() == mClient.get() && generation > mGeneration) { mGeneration = generation; clear(); }
         return ndk::ScopedAStatus::ok();
     }
+    ndk::ScopedAStatus reportFps(int64_t generation, float fps, const ndk::SpAIBinder& client) override {
+        if (AIBinder_getCallingUid() != 1000) return ndk::ScopedAStatus::fromExceptionCode(EX_SECURITY);
+        std::lock_guard lock(mMutex);
+        if (!mSession || generation != mGeneration || client.get() != mClient.get())
+            return ndk::ScopedAStatus::ok();
+        update(); // Verify identity, gate and current temperature before boosting its row.
+        const auto now = nowMs();
+        if (!mSession || !mGate.ready(now) || mSensorFailed || mBand < 0)
+            return ndk::ScopedAStatus::ok();
+        const auto selection = mPolicy.select(mSession->packageName, mSession->mode);
+        ++mFpsSamples;
+        LOG(VERBOSE) << "Game fps=" << fps;
+        if (mFps.sample(now, fps, Policy::fpsEnabled(*selection.mode, selection.profile), selection.mode->boostLengthMs)) {
+            ++mFpsBoosts;
+            mPerf.apply(Policy::resources(*selection.mode, mBand, true));
+            mWake.notify_one();
+        }
+        if (now - mFpsLogTime >= 30000) {
+            LOG(INFO) << "Game FPS feedback samples=" << mFpsSamples << " boosts=" << mFpsBoosts;
+            mFpsLogTime = now; mFpsSamples = 0; mFpsBoosts = 0;
+        }
+        return ndk::ScopedAStatus::ok();
+    }
     void run() {
         std::unique_lock lock(mMutex);
         for (;;) {
             const auto now = nowMs();
             int64_t deadline = now + mPolicy.overlay.sampleMs;
             if (mSession && !mGate.ready(now)) deadline = std::min(deadline, mGate.deadline());
+            if (mFps.active(now)) deadline = std::min(deadline, mFps.deadline());
             mWake.wait_until(lock, std::chrono::steady_clock::time_point(std::chrono::milliseconds(deadline)));
             update();
         }
@@ -166,6 +192,7 @@ class Service final : public BnGamePolicy {
     }
     void clear(bool resetCase = true, bool resetThreads = true) {
         mPerf.release(); mSession.reset(); mBand = -1;
+        mFps.cancel();
         if (resetThreads) mThreads.clear();
         mLoggedMode = nullptr;
         if (resetCase) setCase(0);
@@ -219,14 +246,15 @@ class Service final : public BnGamePolicy {
         setCase(decision.thermalCase);
         if (!temp || age > 1500) {
             if (!mSensorFailed) LOG(WARNING) << "Invalid/stale game temperature; releasing frequency request";
-            mSensorFailed = true; mPerf.release(); mBand = -1; return;
+            mSensorFailed = true; mPerf.release(); mFps.cancel(); mBand = -1; return;
         }
         mSensorFailed = false;
         const int next = decision.band;
         if (next != mBand) LOG(INFO) << "Game profile=" << selection.profile << " band=" << next
                                     << " temperature=" << *temp << " case=" << selection.mode->thermalCase;
+        if (next != mBand) mFps.cancel();
         mBand = next;
-        mPerf.apply(decision.resources);
+        mPerf.apply(mFps.active(nowMs()) ? Policy::resources(*selection.mode, mBand, true) : decision.resources);
     }
     Policy mPolicy;
     Perf mPerf;
@@ -238,6 +266,9 @@ class Service final : public BnGamePolicy {
     AIBinder_DeathRecipient* mDeath;
     int64_t mGeneration = 0;
     SessionGate mGate;
+    FpsController mFps;
+    int64_t mFpsLogTime = nowMs();
+    uint64_t mFpsSamples = 0, mFpsBoosts = 0;
     const Mode* mLoggedMode = nullptr;
     std::string mSensor;
     int mCase = -1, mBand = -1;
