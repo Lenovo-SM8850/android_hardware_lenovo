@@ -18,7 +18,13 @@ r_dir_file(vendor_game_policy, sysfs_devices_system_cpu)
 r_dir_file(vendor_game_policy, vendor_sysfs_kgsl)
 allow vendor_game_policy sysfs:dir r_dir_perms;
 allow vendor_game_policy sysfs:lnk_file read;
-# Read only game UID/start-time/death identity, without affinity or scheduling rights.
+# Read game identity and task names; apply and restore app thread placement.
 allow vendor_game_policy proc:dir search;
-allow vendor_game_policy appdomain:dir { search getattr };
+allow vendor_game_policy appdomain:dir { open read search getattr };
 allow vendor_game_policy appdomain:file { open read getattr };
+allow vendor_game_policy self:global_capability_class_set sys_nice;
+allow vendor_game_policy appdomain:process { getsched setsched };
+# Persist originals before modifying a thread so daemon restarts can restore them.
+type vendor_game_policy_data_file, file_type, data_file_type;
+allow vendor_game_policy vendor_game_policy_data_file:dir create_dir_perms;
+allow vendor_game_policy vendor_game_policy_data_file:file create_file_perms;

@@ -23,3 +23,4 @@
 /dev/goodix_fp    u:object_r:fingerprint_device:s0
 /vendor/bin/lenovo-cover                                  u:object_r:lenovo_cover_exec:s0
 /vendor/bin/vendor\.lenovo\.game-policy u:object_r:vendor_game_policy_exec:s0
+/data/vendor/gamepolicy(/.*)? u:object_r:vendor_game_policy_data_file:s0

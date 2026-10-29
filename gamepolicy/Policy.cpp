@@ -35,7 +35,69 @@ bool supported(const std::string& mode) {
     return mode == "Balance" || mode == "Savage" || mode == "PowerSave";
 }
 bool allowedCase(int code) { return code == 0 || code == 100 || code == 200 || code == 300 || code == 400; }
+// These resources map to carried cgroup and KGSL nodes on both targets.
+constexpr int kUclamp = 0x40CAC000;
+constexpr int kGpuDefault = 0x42800000;
+
+std::string optionValue(const tinyxml2::XMLElement* e) {
+    if (!e->GetText()) throw std::runtime_error("Missing element text");
+    const std::string text = e->GetText();
+    const auto first = text.find_first_not_of(" \t\r\n");
+    if (first == std::string::npos) throw std::runtime_error("Missing element text");
+    return text.substr(first, text.find_last_not_of(" \t\r\n") - first + 1);
+}
+
+int64_t nameHash(const std::string& name) {
+    uint32_t hash = 0;
+    for (unsigned char c : name) hash = hash * 31 + c;
+    return hash & 0x80000000U ? static_cast<int64_t>(hash) - 0x100000000LL : hash;
+}
+
+void threadOptions(const tinyxml2::XMLElement* parent, Mode& mode,
+                   std::vector<std::string>& diagnostics, const std::string& context) {
+    auto attempt = [&](const tinyxml2::XMLElement* e, const auto& parse) {
+        try { parse(); }
+        catch (const std::exception& error) {
+            diagnostics.push_back(context + "/" + e->Name() + ": " + error.what());
+        }
+    };
+    for (auto e = parent->FirstChildElement(); e; e = e->NextSiblingElement()) {
+        const std::string kind = e->Name();
+        if (kind == "BindCore") {
+            for (auto tid = e->FirstChildElement(); tid; tid = tid->NextSiblingElement()) attempt(tid, [&] {
+                if (std::string(tid->Name()) != "tid") throw std::runtime_error("Unknown affinity entry");
+                const auto name = attr(tid, "name");
+                if (name.empty() || name.size() > 15) throw std::runtime_error("Invalid thread name");
+                const auto mask = Policy::mask(optionValue(tid));
+                auto prior = std::find_if(mode.bindCore.begin(), mode.bindCore.end(), [&](const auto& rule) { return rule.name == name; });
+                if (prior == mode.bindCore.end()) mode.bindCore.push_back({name, mask});
+                else prior->mask = mask;
+            });
+        } else if (kind == "ThreadScheduler") attempt(e, [&] {
+            const auto name = attr(e, "name");
+            const int priority = integer(attr(e, "priority")), enabled = integer(optionValue(e));
+            if (name.empty() || name.size() > 15 || priority < 90 || priority > 99 ||
+                (enabled != 0 && enabled != 1)) throw std::runtime_error("Invalid FIFO rule");
+            mode.schedulers.push_back({name, std::clamp(priority, 1, 99), enabled == 1});
+        });
+        else if (kind == "DelayTime") attempt(e, [&] {
+            const int delay = integer(optionValue(e));
+            if (delay < 0) throw std::runtime_error("Invalid delay");
+            mode.delayMs = delay;
+        });
+    }
+}
 } // namespace
+
+uint64_t Policy::mask(const std::string& text) {
+    const auto start = text.compare(0, 2, "0x") == 0 || text.compare(0, 2, "0X") == 0 ? 2 : 0;
+    if (text.size() <= static_cast<size_t>(start) || text.size() - start > 16 ||
+        text.find_first_not_of("0123456789abcdefABCDEF", start) != std::string::npos)
+        throw std::runtime_error("Invalid hexadecimal CPU mask");
+    const auto bits = std::stoull(text.substr(start), nullptr, 16);
+    if (!bits) throw std::runtime_error("Empty CPU mask");
+    return bits;
+}
 
 bool Policy::load(const std::string& stock, const std::string& overrides, std::string* error) {
     *this = Policy{};
@@ -100,6 +162,8 @@ bool Policy::load(const std::string& stock, const std::string& overrides, std::s
         if (!policies) throw std::runtime_error("Missing GamePolicy");
         for (auto game = policies->FirstChildElement("Game"); game; game = game->NextSiblingElement("Game")) {
             std::map<std::string, Mode> modes;
+            Mode defaults;
+            threadOptions(game, defaults, diagnostics, attr(game, "pkg"));
             auto sensor = game->FirstChildElement("ThermalTempType");
             if (sensor && integer(value(sensor)) != 11) throw std::runtime_error("Unsupported sensor type");
             for (auto m = game->FirstChildElement("Mode"); m; m = m->NextSiblingElement("Mode")) {
@@ -108,6 +172,32 @@ bool Policy::load(const std::string& stock, const std::string& overrides, std::s
                 auto ms = m->FirstChildElement("ThermalTempType");
                 if (ms && integer(value(ms)) != 11) throw std::runtime_error("Unsupported mode sensor");
                 Mode mode;
+                mode.delayMs = defaults.delayMs;
+                const auto context = attr(game, "pkg") + "/" + name;
+                threadOptions(m, mode, diagnostics, context);
+                if (mode.bindCore.empty()) mode.bindCore = defaults.bindCore;
+                // The source map iterates by signed string hash, with insertion order
+                // for collisions. This matters when broad names overlap specific ones.
+                std::stable_sort(mode.bindCore.begin(), mode.bindCore.end(), [](const auto& a, const auto& b) {
+                    return nameHash(a.name) < nameHash(b.name);
+                });
+                for (auto hints = m->FirstChildElement("PerfHint"); hints; hints = hints->NextSiblingElement("PerfHint")) {
+                    for (auto opcode = hints->FirstChildElement(); opcode; opcode = opcode->NextSiblingElement()) {
+                        const std::string id = opcode->Attribute("id") ? opcode->Attribute("id") : "missing";
+                        try {
+                            if (std::string(opcode->Name()) != "opcode") throw std::runtime_error("Unknown hint entry");
+                            const int op = integer(id);
+                            if (op != kUclamp && op != kGpuDefault) throw std::runtime_error("Unmapped resource");
+                            if (integer(attr(opcode, "time")) != 0) throw std::runtime_error("Nonzero duration");
+                            const int n = integer(optionValue(opcode));
+                            const int max = op == kUclamp ? 100 : static_cast<int>(mDeclared[2].size()) - 1;
+                            if (n < 0 || n > max) throw std::runtime_error("Value out of range");
+                            mode.perfHints.push_back({op, n});
+                        } catch (const std::exception& e) {
+                            diagnostics.push_back(context + "/PerfHint " + id + ": " + e.what());
+                        }
+                    }
+                }
                 auto scene = m->FirstChildElement("ThermalSceneCode");
                 if (!scene) scene = game->FirstChildElement("ThermalSceneCode");
                 mode.thermalCase = scene ? integer(value(scene)) : 0;
@@ -177,6 +267,20 @@ void Policy::resolve(const Opps& actual) {
         std::sort(table.begin(), table.end());
         table.erase(std::unique(table.begin(), table.end()), table.end());
         if (r == 2) std::reverse(table.begin(), table.end());
+    }
+    for (auto& [pkg, modes] : games) for (auto& [name, mode] : modes) {
+        auto& hints = mode.perfHints;
+        const auto context = pkg + "/" + name;
+        hints.erase(std::remove_if(hints.begin(), hints.end(), [&](PerfHint& hint) {
+            if (hint.opcode != kGpuDefault) return false;
+            const int wanted = std::min(mDeclared[2][hint.value], overlay.ceilings[2]);
+            for (size_t i = 0; i < tables[2].size(); ++i) if (tables[2][i] <= wanted) {
+                hint.value = i;
+                return false;
+            }
+            diagnostics.push_back(context + "/PerfHint 0x42800000: No safe OPP");
+            return true;
+        }), hints.end());
     }
     for (auto& [pkg, modes] : games) for (auto& [name, mode] : modes) for (auto& b : mode.bands) {
         for (int r = 0; r < 3; ++r) {
@@ -262,8 +366,8 @@ Decision Policy::evaluate(const Mode& mode, std::optional<double> temperature,
     decision.thermalCase = mode.thermalCase;
     if (!mode.bands.empty()) {
         decision.band = band(mode, *temperature, previous, hysteresis);
-        decision.resources = resources(mode.bands[decision.band]);
     }
+    decision.resources = resources(mode, decision.band);
     return decision;
 }
 
@@ -273,6 +377,12 @@ std::vector<int> Policy::resources(const Band& band) {
         if (band.bounds[r].floor >= 0) { args.push_back(kMin[r]); args.push_back(band.bounds[r].floor); }
         if (band.bounds[r].ceiling >= 0) { args.push_back(kMax[r]); args.push_back(band.bounds[r].ceiling); }
     }
+    return args;
+}
+
+std::vector<int> Policy::resources(const Mode& mode, int band) {
+    auto args = band >= 0 && static_cast<size_t>(band) < mode.bands.size() ? resources(mode.bands[band]) : std::vector<int>{};
+    for (const auto& hint : mode.perfHints) { args.push_back(hint.opcode); args.push_back(hint.value); }
     return args;
 }
 } // namespace gamepolicy

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "Policy.h"
+#include "Threads.h"
 #include <aidl/io/github/miner7222/gamepolicy/BnGamePolicy.h>
 #include <android/binder_manager.h>
 #include <android/binder_process.h>
@@ -86,7 +87,7 @@ class Perf {
 
 class Service final : public BnGamePolicy {
   public:
-    explicit Service(Policy policy) : mPolicy(std::move(policy)) {
+    Service(Policy policy, Threads threads) : mPolicy(std::move(policy)), mThreads(std::move(threads)) {
         mDeath = AIBinder_DeathRecipient_new([](void* cookie) {
             auto self = static_cast<Service*>(cookie);
             std::lock_guard lock(self->mMutex);
@@ -113,11 +114,13 @@ class Service final : public BnGamePolicy {
         if (!start || *start != session.processStartTimeTicks) {
             clear(); return ndk::ScopedAStatus::fromExceptionCode(EX_ILLEGAL_ARGUMENT);
         }
-        const bool same = mSession && mSession->uid == session.uid && mSession->pid == session.pid &&
-                mSession->packageName == session.packageName && mSession->mode == session.mode &&
+        const bool sameProcess = mSession && mSession->uid == session.uid && mSession->pid == session.pid &&
+                mSession->packageName == session.packageName &&
                 mSession->processStartTimeTicks == session.processStartTimeTicks;
+        const bool same = sameProcess && mSession->mode == session.mode;
         if (!same) {
-            clear(false);
+            clear(false, !sameProcess);
+            if (!sameProcess) mSessionStart = std::chrono::steady_clock::now();
             LOG(INFO) << "Game session uid=" << session.uid << " pid=" << session.pid
                       << " package=" << session.packageName << " mode=" << session.mode;
         }
@@ -147,8 +150,10 @@ class Service final : public BnGamePolicy {
         if (AIBinder_linkToDeath(client.get(), mDeath, this) != STATUS_OK) return false;
         mClient = client; mGeneration = 0; return true;
     }
-    void clear(bool resetCase = true) {
+    void clear(bool resetCase = true, bool resetThreads = true) {
         mPerf.release(); mSession.reset(); mBand = -1;
+        if (resetThreads) mThreads.clear();
+        mLoggedMode = nullptr;
         if (resetCase) setCase(0);
     }
     void setCase(int code) {
@@ -178,10 +183,19 @@ class Service final : public BnGamePolicy {
         return milli / 1000.0;
     }
     void update() {
-        if (!mSession) { setCase(0); return; }
+        if (!mSession) { mThreads.clear(); setCase(0); return; }
         const auto start = identity(mSession->pid, mSession->uid);
         if (!start || *start != mSession->processStartTimeTicks) { LOG(INFO) << "Game process exited"; clear(); return; }
         const auto selection = mPolicy.select(mSession->packageName, mSession->mode);
+        const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now() - mSessionStart).count();
+        const bool threadsChanged = mThreads.apply(mSession->pid, *start, *selection.mode,
+                                                  selection.threadPlacement, elapsed);
+        if (threadsChanged || mLoggedMode != selection.mode) {
+            LOG(INFO) << "Game rule set tids_bound=" << mThreads.bound() << " tids_rt=" << mThreads.realtime()
+                      << " perf_hint_pairs=" << selection.mode->perfHints.size();
+            mLoggedMode = selection.mode;
+        }
         const auto before = std::chrono::steady_clock::now();
         auto temp = temperature();
         const auto age = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -201,11 +215,14 @@ class Service final : public BnGamePolicy {
     }
     Policy mPolicy;
     Perf mPerf;
+    Threads mThreads;
     std::mutex mMutex;
     std::optional<GameSession> mSession;
     ndk::SpAIBinder mClient;
     AIBinder_DeathRecipient* mDeath;
     int64_t mGeneration = 0;
+    std::chrono::steady_clock::time_point mSessionStart;
+    const Mode* mLoggedMode = nullptr;
     std::string mSensor;
     int mCase = -1, mBand = -1;
     bool mSensorFailed = false;
@@ -215,6 +232,9 @@ class Service final : public BnGamePolicy {
 int main(int argc, char** argv) {
     android::base::InitLogging(argv, android::base::LogdLogger(android::base::SYSTEM));
     (void)argc;
+    gamepolicy::Threads threads([](const std::string& message) { LOG(WARNING) << message; },
+                                [](const std::string& message) { LOG(INFO) << message; });
+    threads.recover();
     // Reset even when configuration loading fails after a previous daemon crash.
     if (android::base::GetProperty("vendor.lenovo.game_thermal_case", "") != "0") {
         android::base::SetProperty("vendor.lenovo.game_thermal_case", "0");
@@ -233,7 +253,7 @@ int main(int argc, char** argv) {
     for (const auto& diagnostic : policy.diagnostics) LOG(WARNING) << diagnostic;
     LOG(INFO) << "Loaded game policy " << policy.version << ", " << policy.games.size() << " packages";
     ABinderProcess_setThreadPoolMaxThreadCount(1);
-    auto service = ndk::SharedRefBase::make<gamepolicy::Service>(std::move(policy));
+    auto service = ndk::SharedRefBase::make<gamepolicy::Service>(std::move(policy), std::move(threads));
     const std::string name = std::string(gamepolicy::Service::descriptor) + "/default";
     if (AServiceManager_addService(service->asBinder().get(), name.c_str()) != STATUS_OK) return 1;
     ABinderProcess_startThreadPool();
