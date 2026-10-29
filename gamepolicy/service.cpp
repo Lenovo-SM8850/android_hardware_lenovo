@@ -15,6 +15,7 @@
 #include <chrono>
 #include <charconv>
 #include <cmath>
+#include <condition_variable>
 #include <mutex>
 #include <optional>
 #include <sstream>
@@ -25,6 +26,10 @@ using aidl::io::github::miner7222::gamepolicy::GameSession;
 using namespace std::chrono_literals;
 namespace gamepolicy {
 namespace {
+int64_t nowMs() {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now().time_since_epoch()).count();
+}
 std::string read(const std::string& path) {
     std::string data;
     if (!android::base::ReadFileToString(path, &data)) return {};
@@ -120,13 +125,21 @@ class Service final : public BnGamePolicy {
         const bool same = sameProcess && mSession->mode == session.mode;
         if (!same) {
             clear(false, !sameProcess);
-            if (!sameProcess) mSessionStart = std::chrono::steady_clock::now();
+            if (!sameProcess) {
+                const auto now = nowMs();
+                mGate.start(now, mPolicy.select(session.packageName, session.mode).mode->delayMs);
+                mFps.reset(now);
+            } else {
+                mGate.modeChanged();
+                mFps.cancel();
+            }
             LOG(INFO) << "Game session uid=" << session.uid << " pid=" << session.pid
                       << " package=" << session.packageName << " mode=" << session.mode;
         }
         mSession = session;
         // Sample before the first request. Mode updates must not reuse a preceding band.
         update();
+        mWake.notify_one();
         return ndk::ScopedAStatus::ok();
     }
     ndk::ScopedAStatus stopSession(int64_t generation, const ndk::SpAIBinder& client) override {
@@ -135,10 +148,37 @@ class Service final : public BnGamePolicy {
         if (client.get() == mClient.get() && generation > mGeneration) { mGeneration = generation; clear(); }
         return ndk::ScopedAStatus::ok();
     }
+    ndk::ScopedAStatus reportFps(int64_t generation, float fps, const ndk::SpAIBinder& client) override {
+        if (AIBinder_getCallingUid() != 1000) return ndk::ScopedAStatus::fromExceptionCode(EX_SECURITY);
+        std::lock_guard lock(mMutex);
+        if (!mSession || generation != mGeneration || client.get() != mClient.get())
+            return ndk::ScopedAStatus::ok();
+        update(); // Verify identity, gate and current temperature before boosting its row.
+        const auto now = nowMs();
+        if (!mSession || !mGate.ready(now) || mSensorFailed || mBand < 0)
+            return ndk::ScopedAStatus::ok();
+        const auto selection = mPolicy.select(mSession->packageName, mSession->mode);
+        ++mFpsSamples;
+        LOG(VERBOSE) << "Game fps=" << fps;
+        if (mFps.sample(now, fps, Policy::fpsEnabled(*selection.mode, selection.profile))) {
+            ++mFpsBoosts;
+            mPerf.apply(Policy::resources(*selection.mode, mBand, true));
+            mWake.notify_one();
+        }
+        if (now - mFpsLogTime >= 30000) {
+            LOG(INFO) << "Game FPS feedback samples=" << mFpsSamples << " boosts=" << mFpsBoosts;
+            mFpsLogTime = now; mFpsSamples = 0; mFpsBoosts = 0;
+        }
+        return ndk::ScopedAStatus::ok();
+    }
     void run() {
+        std::unique_lock lock(mMutex);
         for (;;) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(mPolicy.overlay.sampleMs));
-            std::lock_guard lock(mMutex);
+            const auto now = nowMs();
+            int64_t deadline = now + mPolicy.overlay.sampleMs;
+            if (mSession && !mGate.ready(now)) deadline = std::min(deadline, mGate.deadline());
+            if (mFps.active(now)) deadline = std::min(deadline, mFps.deadline());
+            mWake.wait_until(lock, std::chrono::steady_clock::time_point(std::chrono::milliseconds(deadline)));
             update();
         }
     }
@@ -152,6 +192,7 @@ class Service final : public BnGamePolicy {
     }
     void clear(bool resetCase = true, bool resetThreads = true) {
         mPerf.release(); mSession.reset(); mBand = -1;
+        mFps.cancel();
         if (resetThreads) mThreads.clear();
         mLoggedMode = nullptr;
         if (resetCase) setCase(0);
@@ -187,10 +228,11 @@ class Service final : public BnGamePolicy {
         const auto start = identity(mSession->pid, mSession->uid);
         if (!start || *start != mSession->processStartTimeTicks) { LOG(INFO) << "Game process exited"; clear(); return; }
         const auto selection = mPolicy.select(mSession->packageName, mSession->mode);
-        const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
-                std::chrono::steady_clock::now() - mSessionStart).count();
+        if (!mGate.ready(nowMs())) {
+            mPerf.release(); mThreads.clear(); setCase(0); return;
+        }
         const bool threadsChanged = mThreads.apply(mSession->pid, *start, *selection.mode,
-                                                  selection.threadPlacement, elapsed);
+                                                  selection.threadPlacement);
         if (threadsChanged || mLoggedMode != selection.mode) {
             LOG(INFO) << "Game rule set tids_bound=" << mThreads.bound() << " tids_rt=" << mThreads.realtime()
                       << " perf_hint_pairs=" << selection.mode->perfHints.size();
@@ -204,24 +246,29 @@ class Service final : public BnGamePolicy {
         setCase(decision.thermalCase);
         if (!temp || age > 1500) {
             if (!mSensorFailed) LOG(WARNING) << "Invalid/stale game temperature; releasing frequency request";
-            mSensorFailed = true; mPerf.release(); mBand = -1; return;
+            mSensorFailed = true; mPerf.release(); mFps.cancel(); mBand = -1; return;
         }
         mSensorFailed = false;
         const int next = decision.band;
         if (next != mBand) LOG(INFO) << "Game profile=" << selection.profile << " band=" << next
                                     << " temperature=" << *temp << " case=" << selection.mode->thermalCase;
+        if (next != mBand) mFps.cancel();
         mBand = next;
-        mPerf.apply(decision.resources);
+        mPerf.apply(mFps.active(nowMs()) ? Policy::resources(*selection.mode, mBand, true) : decision.resources);
     }
     Policy mPolicy;
     Perf mPerf;
     Threads mThreads;
     std::mutex mMutex;
+    std::condition_variable mWake;
     std::optional<GameSession> mSession;
     ndk::SpAIBinder mClient;
     AIBinder_DeathRecipient* mDeath;
     int64_t mGeneration = 0;
-    std::chrono::steady_clock::time_point mSessionStart;
+    SessionGate mGate;
+    FpsController mFps;
+    int64_t mFpsLogTime = nowMs();
+    uint64_t mFpsSamples = 0, mFpsBoosts = 0;
     const Mode* mLoggedMode = nullptr;
     std::string mSensor;
     int mCase = -1, mBand = -1;
@@ -249,7 +296,13 @@ int main(int argc, char** argv) {
         std::istringstream input(gamepolicy::read(policy.overlay.oppPaths[r]));
         int f; while (input >> f) opps[r].push_back(f);
     }
-    policy.resolve(opps);
+    std::array<int, 2> coreCounts{};
+    for (int r = 0; r < 2; ++r) {
+        const auto& path = policy.overlay.oppPaths[r];
+        coreCounts[r] = gamepolicy::coreCount(gamepolicy::read(path.substr(0, path.rfind('/')) + "/related_cpus"));
+        if (!coreCounts[r]) LOG(WARNING) << "Missing CPU topology for resource " << r;
+    }
+    policy.resolve(opps, coreCounts);
     for (const auto& diagnostic : policy.diagnostics) LOG(WARNING) << diagnostic;
     LOG(INFO) << "Loaded game policy " << policy.version << ", " << policy.games.size() << " packages";
     ABinderProcess_setThreadPoolMaxThreadCount(1);

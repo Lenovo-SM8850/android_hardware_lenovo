@@ -11,6 +11,11 @@
 #include <limits>
 #include <stdexcept>
 #include <sstream>
+#include <thread>
+#include <sys/wait.h>
+#include <unistd.h>
+#include <signal.h>
+#include <pthread.h>
 
 using namespace gamepolicy;
 namespace {
@@ -35,15 +40,48 @@ void real(const char* stock, const char* overlay) {
     require(policy.load(stock, overlay, &error), error.c_str());
     require(policy.aliasesValid(&error), "Device overlay contains dangling alias");
     const Policy unresolved = policy;
-    size_t hints = 0, bound = 0, rt = 0, delays = 0;
+    const auto actual = sample(stock);
+    policy.resolve(actual, {6, 2});
+    size_t sceneRows = 0, metadata = 0;
+    for (const auto& [pkg, list] : policy.sceneLists) metadata += list.size();
+    for (const auto& [pkg, modes] : policy.games) for (const auto& [name, mode] : modes) {
+        sceneRows += mode.scenes.size();
+        require(mode.scenes.size() == modes.at("Balance").scenes.size(), "Profile scene inheritance lost");
+        for (const auto& [id, scene] : mode.scenes) {
+            require(scene.timeMs > 0 && id >= 0 && id <= 100000, "Invalid real scene row");
+            for (int r = 0; r < 3; ++r) {
+                const auto& b = scene.frequencies.bounds[r];
+                for (int v : {b.floor, b.ceiling}) if (v >= 0)
+                    require((r == 2 ? actual[2].at(v) : v * 1000) <= policy.overlay.ceilings[r],
+                            "Real scene row exceeded hard device ceiling");
+                require(b.floor < 0 || (r == 2 ? b.floor >= b.ceiling : b.floor <= b.ceiling),
+                        "Real scene floor exceeded effective ceiling");
+            }
+        }
+    }
+    require(sceneRows == (policy.version == "20260907" ? 42 : 108), "Unexpected real scene row count");
+    require(policy.sceneLists.size() == 2 && metadata > 20, "SceneList metadata missing");
+    const auto pubg = policy.select("com.pubg.krmobile", 1);
+    const auto sgame = policy.select("com.levelinfinite.sgameGlobal", 1);
+    require(pubg.profile == "com.tencent.tmgp.pubgmhd" && sgame.profile == "com.tencent.tmgp.sgame",
+            "Scene-gated aliases changed");
+    require(pubg.mode->scenes.size() == (policy.version == "20260907" ? 5 : 16) &&
+            sgame.mode->scenes.size() == 2, "SceneOpt profile row counts");
+    std::cout << "SCENE_COUNTS version=" << policy.version << " profile_rows=" << pubg.mode->scenes.size() + 2
+              << " inherited_rows=" << sceneRows << " metadata_profiles=" << policy.sceneLists.size()
+              << " metadata_ids=" << metadata << " hard_ceilings=OK\n";
+    size_t hints = 0, bound = 0, rt = 0, delays = 0, fps = 0;
     std::map<int, size_t> accepted, dropped;
     for (const auto& [pkg, modes] : policy.games) for (const auto& [name, mode] : modes) {
         hints += mode.perfHints.size(); bound += mode.bindCore.size(); rt += mode.schedulers.size();
         delays += mode.delayMs > 0;
+        fps += Policy::fpsEnabled(mode, pkg);
         for (const auto& hint : mode.perfHints) {
             ++accepted[hint.opcode];
             require((hint.opcode == 0x40CAC000 && hint.value >= 0 && hint.value <= 100) ||
-                    hint.opcode == 0x42800000, "Unallowlisted real hint");
+                    hint.opcode == 0x42800000 ||
+                    (hint.opcode == 0x41000000 && hint.value >= 0 && hint.value <= 6) ||
+                    (hint.opcode == 0x41000200 && hint.value >= 0 && hint.value <= 2), "Unallowlisted real hint");
         }
     }
     for (const auto& diagnostic : policy.diagnostics) {
@@ -52,19 +90,23 @@ void real(const char* stock, const char* overlay) {
     }
     require(hints > 100 && bound > 200 && rt >= 6 && delays >= 3, "Missing phase 2 real coverage");
     if (policy.version == "20260907")
-        require(hints == 198 && bound == 509 && rt == 102 && delays == 22, "Unexpected wuji phase 2 counts");
+        require(accepted[0x40CAC000] == 191 && accepted[0x42800000] == 7 && bound == 509 && rt == 102 && delays == 22,
+                "Unexpected wuji retained phase 2 counts");
     else if (policy.version == "20260721")
-        require(hints == 174 && bound == 385 && rt == 12 && delays == 10, "Unexpected baldur phase 2 counts");
-    require(dropped[0x41000000] > 0 && dropped[0x41000200] > 0, "Unmapped core resources accepted");
+        require(accepted[0x40CAC000] == 174 && bound == 385 && rt == 12 && delays == 10,
+                "Unexpected baldur retained phase 2 counts");
+    require(accepted[0x41000000] > 0 && accepted[0x41000200] > 0, "Core resources missing");
+    require(accepted[0x41000000] + accepted[0x41000200] == (policy.version == "20260907" ? 51 : 16) &&
+            dropped[0x41000100] == (policy.version == "20260907" ? 2 : 0), "Unexpected phase 3 min-core counts");
     require(policy.version != "20260721" || dropped[0x40400000] > 0, "Unmapped extra resource accepted");
-    std::cout << "PHASE2_COUNTS version=" << policy.version << " perf_pairs=" << hints << " bind_rules=" << bound
-              << " rt_rules=" << rt << " delayed_modes=" << delays << '\n';
+    std::cout << "PHASE3_COUNTS version=" << policy.version << " perf_pairs=" << hints << " bind_rules=" << bound
+              << " rt_rules=" << rt << " delayed_modes=" << delays << " fps_enabled_modes=" << fps
+              << " min_core_admitted=" << accepted[0x41000000] + accepted[0x41000200]
+              << " min_core_dropped=" << dropped[0x41000000] + dropped[0x41000100] + dropped[0x41000200] << '\n';
     for (auto [opcode, count] : accepted)
         std::cout << "PERF_ACCEPT opcode=0x" << std::hex << opcode << std::dec << " count=" << count << '\n';
     for (auto [opcode, count] : dropped) if (count)
         std::cout << "PERF_DROP opcode=0x" << std::hex << opcode << std::dec << " count=" << count << '\n';
-    const auto actual = sample(stock);
-    policy.resolve(actual);
     int clamped = 0;
     for (const auto& [pkg, definitions] : unresolved.games) for (const auto& [name, mode] : definitions) {
         for (size_t i = 0; i < mode.bands.size(); ++i) for (int r = 0; r < 3; ++r) {
@@ -93,6 +135,17 @@ void real(const char* stock, const char* overlay) {
     }
     size_t modes = 0;
     for (const auto& [pkg, definitions] : policy.games) {
+        for (const auto& [name, definition] : definitions)
+            for (const auto* bands : {&definition.boostedBands, &definition.jankBands}) for (const auto& boosted : *bands) {
+            for (int r = 0; r < 3; ++r) {
+                const auto& b = boosted.bounds[r];
+                for (int v : {b.floor, b.ceiling}) if (v >= 0)
+                    require((r == 2 ? actual[2].at(v) : v * 1000) <= policy.overlay.ceilings[r],
+                            "Real boosted row exceeded hard device ceiling");
+                require(b.floor < 0 || (r == 2 ? b.floor >= b.ceiling : b.floor <= b.ceiling),
+                        "Real boosted floor exceeded effective ceiling");
+            }
+        }
         for (int id : {1, 2, 3, 0, 4}) {
             auto selected = policy.select(pkg, id);
             const auto alias = policy.overlay.aliases.find(pkg);
@@ -130,7 +183,12 @@ void synthetic(const std::filesystem::path& directory) {
       <cluster name="Prime" min="0x40800200" max="0x40804200">768000 2000000 3000000</cluster></CPU>
       <GPU><cluster name="Gpu" min="0x42804000" max="0x42808000">1000000000 800000000 600000000</cluster></GPU>
       </PreEnv><GamePolicy><Game pkg="default"><ThermalTempType>11</ThermalTempType>
+      <SceneOpt><Scene id="1" time="1000"><item type="freq" name="Gold">-2_99</item>
+      <item type="freq" name="Prime">2_-1</item><item type="freq" name="Gpu">99_0</item></Scene></SceneOpt>
+      <SceneOpt><Scene id="7" time="200"><item type="freq" name="Gold">1_1</item></Scene></SceneOpt>
       <BindCore><tid name="Main">C0</tid></BindCore><DelayTime>5000</DelayTime>
+      <FpsAdjustLevel>1,2,3</FpsAdjustLevel><FpsAdjustTime>0</FpsAdjustTime>
+      <JankAdjustLevel>3,2,1</JankAdjustLevel><JankAdjustTime>1234</JankAdjustTime>
       <Mode name="Balance"><ThermalSceneCode>200</ThermalSceneCode><Policy>
       <TempLevel temp="25"><item type="freq" name="Gold">1_2</item><item type="freq" name="Prime">2_-1</item><item type="freq" name="Gpu">2_0</item></TempLevel>
       <TempLevel temp="42"><item type="freq" name="Gold">-2_9</item></TempLevel>
@@ -146,7 +204,7 @@ void synthetic(const std::filesystem::path& directory) {
       <ThreadScheduler name="Invalid" priority="89">1</ThreadScheduler>
       <ThreadScheduler name="Invalid" priority="100">1</ThreadScheduler>
       <ThreadScheduler name="Invalid" priority="95">2</ThreadScheduler>
-      </Mode><Mode name="Savage"><DelayTime>0</DelayTime><BindCore><tid name="Worker">3f</tid>
+      </Mode><Mode name="Savage"><FpsAdjustLevel>4,5,6</FpsAdjustLevel><DelayTime>0</DelayTime><BindCore><tid name="Worker">3f</tid>
       <tid name="Bad">0</tid><tid name="Bad">GG</tid><unknown/></BindCore>
       <ThermalSceneCode>300</ThermalSceneCode><Policy><TempLevel temp="0"/></Policy></Mode>
       <Mode name="PowerSave"><ThermalSceneCode>100</ThermalSceneCode><Policy><TempLevel temp="0"/></Policy></Mode>
@@ -189,6 +247,10 @@ void synthetic(const std::filesystem::path& directory) {
     const auto& savage = *policy.select("default", 2).mode;
     require(savage.bindCore.size() == 1 && savage.bindCore[0].name == "Worker" && savage.delayMs == 0,
             "Mode rules/delay did not override Game defaults");
+    require(mode.fpsAdjust == std::optional<std::array<int, 3>>({1, 2, 3}) &&
+            savage.fpsAdjust == std::optional<std::array<int, 3>>({4, 5, 6}) &&
+            mode.jankAdjust == std::optional<std::array<int, 3>>({3, 2, 1}) && mode.jankAdjustTime == 1234 &&
+            Policy::fpsEnabled(mode, "default"), "Adjustment inheritance/override or ignored time");
     require(policy.select("default", 3).mode->bindCore[0].name == "Main", "Game BindCore inheritance");
     const auto& ordered = *policy.select("order", 1).mode;
     require(ordered.bindCore.size() == 2 && ordered.bindCore[0].name == "Thread-13" && ordered.bindCore[0].mask == 0xC0,
@@ -276,7 +338,7 @@ void threadRules() {
     auto copy = mode;
     copy.thermalCase = 400; copy.perfHints = {{0x40CAC000, 10}};
     require(sameThreadRules(mode, copy), "Unrelated mode fields triggered thread restore");
-    copy.delayMs = 1; require(!sameThreadRules(mode, copy), "Delay diff missed"); copy = mode;
+    copy.delayMs = 1; require(sameThreadRules(mode, copy), "Whole-policy delay affected thread rule equality"); copy = mode;
     copy.bindCore[0].mask = 1; require(!sameThreadRules(mode, copy), "Mask diff missed"); copy = mode;
     copy.schedulers[0].priority = 96; require(!sameThreadRules(mode, copy), "RT diff missed"); copy = mode;
     copy.schedulers[0].enabled = false; require(!sameThreadRules(mode, copy), "Enable diff missed");
@@ -288,6 +350,315 @@ void threadRules() {
     require(!samePlacement(desired[0], renamed) && samePlacement(desired[0], desired[0]), "Recycled TID diff missed");
     require(placements({tasks[3]}, mode, 0xFF).empty(), "Unmatched thread selected");
     std::cout << "THREAD_RULES_OK substring prefix Thread-1-vs-Thread-13 precedence late-tasks rename reuse diff\n";
+}
+void feedback(const std::filesystem::path& directory) {
+    FpsController controller;
+    controller.reset(0);
+    require(!controller.sample(2999, 60, true) && controller.history().back() == 0,
+            "FPS warm-up admitted a sample");
+    for (int64_t t = 3000; t <= 7000; t += 1000) require(!controller.sample(t, 60, true), "Stable FPS boosted");
+    require(controller.sample(8000, 50, true), "FPS trigger band did not boost");
+    require(controller.active(8499) && !controller.active(8500), "FPS restore must occur at 500 ms");
+    require(!controller.sample(8100, 45, true) && controller.deadline() == 8500, "Burst accumulated/extended boost");
+    controller.cancel();
+    require(!controller.active(8100), "Mode/temperature cancellation retained boost");
+    controller.reset(0);
+    require(!controller.active(8000) && controller.history().back() == 0, "New process retained FPS history");
+    for (int64_t t = 3000; t <= 6000; t += 1000) controller.sample(t, 60, true);
+    require(!controller.sample(7000, 9, true) && controller.history().back() == 9, "FPS below 10 not rejected/retained");
+    for (float value : {19.0f, 20.0f}) {
+        controller.reset(0);
+        controller.sample(3000, 10, true); controller.sample(4000, 10, true);
+        controller.sample(5000, 10, true); controller.sample(6000, 100, true);
+        require(controller.sample(7000, value, true) == (value == 20), "80 percent rejection edge");
+    }
+    for (const auto& edge : {std::array<float, 3>{110, 60, 0.01f}, {807, 772, -0.01f}}) {
+        for (float offset : {0.0f, edge[2]}) {
+            controller.reset(0);
+            for (int64_t t = 3000; t <= 6000; t += 1000) controller.sample(t, edge[0], true);
+            const float value = edge[1] + offset;
+            require(controller.sample(7000, value, true) == (offset != 0), "Strict trigger band boundary");
+        }
+    }
+    controller.reset(0);
+    require(!controller.sample(3000, std::numeric_limits<float>::infinity(), true) &&
+            !controller.sample(4000, std::numeric_limits<float>::quiet_NaN(), true), "Nonfinite FPS accepted");
+    SessionGate gate;
+    gate.start(1000, 5000);
+    require(!gate.ready(1000) && !gate.ready(5999) && gate.ready(6000), "Whole-policy delay boundary");
+    gate.start(1000, 5000); gate.modeChanged();
+    require(gate.ready(1001), "Same-process mode change failed to release gate");
+    gate.start(2000, 5000);
+    require(!gate.ready(6000), "New process failed to restart gate");
+    gate.start(2000, 0); require(gate.ready(2000), "Zero delay added startup wait");
+    require(coreCount("0 1 2 3 4 5\n") == 6 && coreCount("6 7\n") == 2 &&
+            coreCount("") == 0 && coreCount("0 0") == 0 && coreCount("0 x") == 0 &&
+            coreCount("-1") == 0, "Runtime CPU topology parsing");
+
+    const auto stock = directory / "policy.xml", overlay = directory / "overlay.xml";
+    Policy parsed; std::string error;
+    require(parsed.load(stock, overlay, &error), "FPS fixture load");
+    Mode mode = *parsed.select("default", 1).mode;
+    mode.fpsAdjust = std::array<int, 3>{INT32_MAX, 1, 2};
+    mode.perfHints = {{0x41000000, 6}, {0x41000200, 2}, {0x41000000, 0}, {0x41000200, 0},
+                     {0x41000000, -1}, {0x41000000, 7}, {0x41000200, 3}, {0x40CAC000, 50}};
+    parsed.games["default"]["Balance"] = mode;
+    const Opps opps = {{{384000, 1000000, 1500000, 2000000}, {768000, 2000000, 3000000},
+                        {1000000000, 800000000, 600000000}}};
+    parsed.resolve(opps, {6, 2});
+    const auto& resolved = *parsed.select("default", 1).mode;
+    require(resolved.perfHints.size() == 5 && resolved.perfHints[0].value == 6 && resolved.perfHints[1].value == 2 &&
+            resolved.perfHints[2].value == 0 && resolved.perfHints[3].value == 0,
+            "Min-core topology range checking");
+    require(Policy::fpsEnabled(resolved, "default") &&
+            !Policy::fpsEnabled(resolved, "com.tencent.tmgp.pubgmhd") &&
+            !Policy::fpsEnabled(resolved, "com.tencent.tmgp.sgame") &&
+            !Policy::fpsEnabled(resolved, "com.tencent.tmgp.projectg") &&
+            !Policy::fpsEnabled(resolved, "com.tencent.tmgp.sgamece"), "Scene-gated FPS feedback enabled");
+    controller.reset(0);
+    for (int64_t t = 3000; t <= 8000; t += 1000)
+        require(!controller.sample(t, t < 8000 ? 60 : 50, false), "Disabled profile boosted");
+    require(resolved.boostedBands[0].bounds[0].floor == 1500 &&
+            resolved.boostedBands[0].bounds[1].floor == 2000 &&
+            resolved.boostedBands[0].bounds[2].floor == 1, "Boost index delta or safe rounding incorrect");
+    require(resolved.boostedBands[1].bounds[1].floor == -1 &&
+            resolved.boostedBands[1].bounds[2].floor == -1 &&
+            resolved.boostedBands[3].bounds[2].floor == -1, "Boost created omitted floor");
+    for (const auto& band : resolved.boostedBands) for (int r = 0; r < 3; ++r) {
+        const auto& bounds = band.bounds[r];
+        if (r < 2) {
+            require(bounds.floor <= parsed.overlay.ceilings[r] / 1000 &&
+                    bounds.ceiling <= parsed.overlay.ceilings[r] / 1000, "CPU boost exceeded hard ceiling");
+            require(bounds.floor < 0 || bounds.floor <= bounds.ceiling, "CPU boost floor exceeds ceiling");
+        } else {
+            for (int index : {bounds.floor, bounds.ceiling}) if (index >= 0)
+                require(opps[2].at(index) <= parsed.overlay.ceilings[2], "GPU boost exceeded hard ceiling");
+            require(bounds.floor < 0 || bounds.floor >= bounds.ceiling, "GPU boost floor exceeds ceiling");
+        }
+    }
+    const auto boosted = Policy::resources(resolved, 0, true);
+    const auto normal = Policy::resources(resolved, 0);
+    const auto hintSize = resolved.perfHints.size() * 2;
+    require(boosted == Policy::resources(resolved, 0, true) &&
+            std::equal(boosted.end() - hintSize, boosted.end(), normal.end() - hintSize),
+            "Boost accumulated or changed hints");
+    Policy unknown = parsed;
+    // A separate unresolved policy verifies fail-closed topology admission, including zero votes.
+    require(unknown.load(stock, overlay, &error), "Topology fixture reload");
+    unknown.games["default"]["Balance"].perfHints = {{0x41000000, 0}, {0x41000200, 0}};
+    unknown.resolve(opps);
+    require(unknown.select("default", 1).mode->perfHints.empty(), "Unknown topology admitted min-core votes");
+    std::cout << "FPS_CONTROLLER_OK history warm-up rejection edges restore no-accumulation cancel disabled\n"
+              << "DELAY_GATE_OK whole-policy mode-release new-process zero-delay\n"
+              << "MIN_CORES_OK topology ranges unknown-topology\n"
+              << "BOOST_RESOLUTION_OK deltas roundDown omissions hints hard-ceilings\n";
+}
+void scenes(const std::filesystem::path& directory) {
+    Policy policy; std::string error;
+    require(policy.load(directory / "policy.xml", directory / "overlay.xml", &error), error.c_str());
+    const Opps actual = {{{384000, 900000, 1500000, 2100000}, {768000, 1900000, 2400000, 3100000},
+                          {1100000000, 850000000, 650000000, 550000000}}};
+    policy.resolve(actual, {6, 2});
+    const auto& mode = *policy.select("default", 1).mode;
+    require(mode.scenes.size() == 2 && policy.select("default", 2).mode->scenes.size() == 2,
+            "Repeated SceneOpt or profile inheritance lost");
+    const auto& row = mode.scenes.at(1).frequencies;
+    require(row.bounds[0].floor == 384 && row.bounds[0].ceiling == 1500 &&
+            row.bounds[1].floor == 2400 && row.bounds[1].ceiling == 2400 &&
+            row.bounds[2].floor == 3 && row.bounds[2].ceiling == 1,
+            "Scene indices did not clamp, round down and obey hard ceilings");
+    SceneController scene;
+    require(!scene.scene() && !scene.active(0), "Initial scene enabled");
+    for (const auto& profile : {"com.tencent.tmgp.pubgmhd", "com.tencent.tmgp.projectg"}) {
+        require(!Policy::fpsEnabled(mode, profile), "PUBG without scene enabled");
+        for (int id : {1, 5, 100, 102, 103, 104, 110, 111})
+            require(Policy::fpsEnabled(mode, profile, id) == (id == 103 || id == 104), "PUBG scene FPS gate");
+    }
+    for (const auto& profile : {"com.tencent.tmgp.sgame", "com.tencent.tmgp.sgamece"}) {
+        require(!Policy::fpsEnabled(mode, profile), "SGAME without scene enabled");
+        for (int id : {1, 5, 7, 6, 106})
+            require(Policy::fpsEnabled(mode, profile, id) == (id == 7), "SGAME scene FPS gate");
+    }
+    require(scene.report(100, 1, mode) && scene.active(1099) && !scene.active(1100), "Scene apply/expire boundary");
+    require(!scene.report(200, 1, mode) && scene.deadline() == 1200, "Repeated scene failed to refresh its row");
+    auto expected = Policy::resources(row);
+    for (const auto& hint : mode.perfHints) { expected.push_back(hint.opcode); expected.push_back(hint.value); }
+    require(scene.resources(200, mode, 0, true) == expected &&
+            scene.resources(200, mode, 0, false) == expected, "FPS stacked on scene or mode hints lost");
+    require(scene.resources(1200, mode, 0, false) == Policy::resources(mode, 0), "Scene expiry failed to restore band");
+    require(scene.report(300, 7, mode) && scene.deadline() == 500, "New scene failed to replace deadline");
+    require(scene.report(400, 103, mode) && !scene.active(400) && scene.scene() == 103,
+            "Unmapped scene failed to cancel row or update FPS gate");
+    require(!scene.report(400, -1, mode) && !scene.report(400, 100001, mode) && scene.scene() == 103,
+            "Out-of-range scene changed state");
+    scene.report(500, 1, mode); scene.cancel();
+    require(!scene.active(501) && scene.scene() == 1 &&
+            scene.resources(501, mode, 0, false) == Policy::resources(mode, 0), "Sensor failure retained scene row");
+    scene.reset();
+    require(!scene.scene() && !scene.active(501), "Mode/session end retained scene state");
+    FpsController fps;
+    fps.reset(0);
+    for (int64_t t = 3000; t <= 7000; t += 1000) fps.sample(t, 60, true);
+    scene.report(7800, 1, mode);
+    require(!fps.sample(8000, 50, !scene.active(8000)), "FPS feedback boosted during scene row");
+    require(fps.sample(8800, 50, !scene.active(8800)), "Scene expiry left FPS feedback suppressed");
+    std::cout << "SCENE_CONTROLLER_OK apply expire replace cancel reset hints no-FPS-stacking\n"
+              << "SCENE_RESOLUTION_OK clamp roundDown hard-ceilings inheritance\n"
+              << "SCENE_FPS_GATES_OK PUBG 1,5,100,102,103,104,110,111 SGAME 7,6,106 no-scene siblings\n";
+}
+void jankFeedback(const std::filesystem::path& directory) {
+    JankController jank;
+    require(!jank.sample(0, 0, 60, true, false) && !jank.sample(0, 61, 60, true, false) &&
+            !jank.sample(0, 1, 0, true, false) && !jank.sample(0, 1, 60, false, false) &&
+            !jank.sample(0, 1, 60, true, true), "Invalid/disabled/blocked jank boosted");
+    require(jank.sample(1000, 1, 60, true, false) && jank.active(1099) && !jank.active(1100),
+            "Jank boost must last exactly 100 ms");
+    require(!jank.sample(1499, 1, 60, true, false) && jank.sample(1500, 1, 60, true, false),
+            "Jank rate limit must be one boost per 500 ms");
+    jank.cancel(); require(!jank.active(1501), "Jank cancellation retained boost");
+    jank.reset(); require(jank.sample(0, 1, 60, true, false), "New session retained jank rate limit");
+    Policy policy; std::string error;
+    require(policy.load(directory / "policy.xml", directory / "overlay.xml", &error), error.c_str());
+    const Opps actual = {{{384000, 1000000, 1500000, 2000000}, {768000, 2000000, 3000000},
+                          {1000000000, 800000000, 600000000}}};
+    policy.resolve(actual, {6, 2});
+    const auto& mode = *policy.select("default", 1).mode;
+    require(Policy::jankEnabled(mode, "default") && !Policy::jankEnabled(mode, "com.tencent.tmgp.pubgmhd") &&
+            Policy::jankEnabled(mode, "com.tencent.tmgp.pubgmhd", 103) &&
+            !Policy::jankEnabled(mode, "com.tencent.tmgp.pubgmhd", 110) &&
+            !Policy::jankEnabled(mode, "com.tencent.tmgp.pubgmhd", 111) &&
+            !Policy::jankEnabled(mode, "com.tencent.tmgp.sgame", 6) &&
+            Policy::jankEnabled(mode, "com.tencent.tmgp.sgame", 7), "Jank scene gating changed");
+    Mode onlyJank = mode; onlyJank.fpsAdjust.reset();
+    require(Policy::jankEnabled(onlyJank, "default"), "Jank incorrectly requires FPS adjustment levels");
+    onlyJank.jankAdjustTime = 0;
+    require(!Policy::jankEnabled(onlyJank, "default"), "Disabled jank time admitted a boost");
+    require(mode.jankBands[0].bounds[0].floor == 1500 && mode.jankBands[0].bounds[1].floor == 2000 &&
+            mode.jankBands[0].bounds[2].floor == 1, "Jank delta resolution or hard ceilings incorrect");
+    SceneController scene;
+    const auto fps = Policy::resources(mode, 0, true);
+    const auto jankArgs = Policy::resources(mode, 0, false, true);
+    require(scene.resources(1000, mode, 0, false, true) == jankArgs &&
+            scene.resources(1000, mode, 0, true, true) == fps, "FPS did not take priority over jank");
+    scene.report(1000, 1, mode);
+    require(scene.resources(1001, mode, 0, true, true) == scene.resources(1001, mode, 0, false),
+            "FPS or jank stacked on a scene row");
+    std::cout << "JANK_CONTROLLER_OK 100ms one-per-500ms app-only counts scene-gates hard-ceilings scene>FPS>jank\n";
+}
+void recurringCost(const std::filesystem::path& directory) {
+    FpsController timed;
+    timed.reset(0);
+    for (int64_t now = 3000; now < 8000; now += 500) require(!timed.sample(now, 60, true), "Stable half-second FPS boosted");
+    require(timed.sample(8000, 50, true), "Half-second FPS dip missed");
+    // The previous five-value history [60,60,60,50,50] has mean 56 and would
+    // boost again on this consecutive dip; a recovery/cooldown is now required.
+    require(50 > 0.6 * 56 && 50 < 0.965 * 56 && !timed.sample(8500, 50, true),
+            "Consecutive samples re-triggered the same dip");
+    require(!timed.sample(9000, 60, true) && timed.sample(9500, 50, true), "Recovery failed to re-arm FPS feedback");
+    timed.reset(0);
+    for (int64_t now = 3000; now < 8000; now += 500) timed.sample(now, 60, true);
+    require(timed.sample(8000, 50, true), "Cooldown fixture missed initial dip");
+    for (int64_t now : {8500, 9000, 9500}) require(!timed.sample(now, 50, true), "FPS dip cooldown ended early");
+    require(timed.sample(10000, 50, true), "Persistent dip failed to retry after two seconds");
+    require(!timed.sample(16000, 45, true) && timed.history()[3] == 0,
+            "Five-second window retained stale samples");
+    timed.reset(0); timed.sample(3000, 60, true);
+    require(!timed.sample(3399, 50, true) && timed.history().back() == 60,
+            "Sub-400 ms callback entered the FPS window");
+    require(timed.sample(3400, 50, true), "400 ms callback was delayed/dropped");
+    std::cout << "FPS_TIME_WINDOW_OK half-second cadence five-second expiry recovery two-second retry 400ms admission\n";
+    FpsController stale, refreshed;
+    stale.reset(0); refreshed.reset(0);
+    for (int64_t now = 3000; now <= 7000; now += 1000) {
+        stale.sample(now, 60, true); refreshed.sample(now, 60, true);
+    }
+    refreshed.invalidate();
+    require(stale.sample(8000, 50, true), "Retained history no longer demonstrates the previous transition trigger");
+    require(!refreshed.sample(8000, 50, true) && refreshed.history().back() == 50,
+            "Changed context retained a stale mean or restarted warm-up");
+    std::cout << "FPS_CONTEXT_RESET_OK old_stale_mean_boosts new_context_does_not warmup_unchanged\n";
+    ThreadScanCadence scans;
+    scans.reset(0);
+    int count = 0;
+    for (int64_t now = 0; now < 60000; now += 1000) count += scans.due(now);
+    require(count == 20, "Thread scan warm-up/5-second cadence");
+    scans.reset(60001);
+    require(scans.due(60001) && !scans.due(61000) && scans.due(61001), "Rule change failed to restart cadence");
+    // A 100 ms request can already have expired when acquisition returns.
+    RequestExpiry expiry;
+    expiry.set(1100);
+    require(expiry.limit(2000) == 1100 && expiry.due(1200), "Expired boost lost its immediate wake-up");
+    expiry.set(0); // The immediate expiry pass has selected the base request.
+    require(expiry.limit(2000) == 2000 && !expiry.due(1200), "Base request retained a boost deadline");
+    scans.reset(0);
+    int64_t nextSample = 0, lastScan = -1, largestGap = 0;
+    int warmupScans = 0;
+    for (int64_t now = 0; now < 31000;) {
+        if (now >= nextSample) nextSample = now + 700;
+        if (scans.due(now, 700)) {
+            if (lastScan >= 0) largestGap = std::max(largestGap, now - lastScan);
+            if (now < 10000) ++warmupScans;
+            lastScan = now;
+        }
+        now = std::min(nextSample, scans.deadline());
+    }
+    require(warmupScans == 15 && largestGap == 5000, "700 ms sampling delayed a thread scan beyond five seconds");
+    std::cout << "WORKER_DEADLINES_OK expired_request_immediate scan_700ms_max_gap=5000\n";
+    PerfLease lease;
+    int renewals = 0;
+    for (int64_t now = 0; now < 10000; now += 1000) {
+        if (lease.due(now)) { ++renewals; lease.acquired(now); }
+    }
+    require(renewals == 5, "Stable perf request did not renew every two seconds");
+    lease.reset(); require(lease.due(9500), "Changed/released request failed to acquire immediately");
+    lease.acquired(10000);
+    require(!lease.due(11999) && lease.due(12000) && lease.due(13000), "Perf lease expiry safety margin");
+
+    const auto journalPath = directory / "cost-threads";
+    Threads threads([](const auto&) {}, [](const auto&) {}, journalPath.string());
+    Mode empty;
+
+    int ready[2]; require(pipe(ready) == 0, "Cannot create thread fixture pipe");
+    const pid_t child = fork(); require(child >= 0, "Cannot fork thread fixture");
+    if (child == 0) {
+        close(ready[0]);
+        std::array<std::thread, 3> workers;
+        for (auto& worker : workers) worker = std::thread([&] {
+            pthread_setname_np(pthread_self(), "CostWorker");
+            const char byte = 'x'; (void)!::write(ready[1], &byte, 1);
+            for (;;) pause();
+        });
+        for (;;) pause();
+    }
+    struct Child {
+        pid_t pid;
+        ~Child() { kill(pid, SIGKILL); waitpid(pid, nullptr, 0); }
+    } cleanup{child};
+    close(ready[1]);
+    for (int i = 0; i < 3; ++i) { char byte; require(read(ready[0], &byte, 1) == 1, "Thread fixture not ready"); }
+    close(ready[0]);
+    std::ifstream stat("/proc/" + std::to_string(child) + "/stat");
+    std::string line, field; std::getline(stat, line);
+    std::istringstream fields(line.substr(line.rfind(')') + 1));
+    for (int i = 3; i <= 22; ++i) fields >> field;
+    const auto start = std::stoll(field);
+    for (int i = 0; i < 20; ++i) threads.apply(child, start, empty, true, i * 1000);
+    require(threads.scans() == 0 && threads.journalWrites() == 0, "Empty rules performed recurring I/O");
+    cpu_set_t allowed; CPU_ZERO(&allowed);
+    require(sched_getaffinity(0, sizeof(allowed), &allowed) == 0, "Host affinity unavailable");
+    int cpu = 0; while (cpu < 64 && !CPU_ISSET(cpu, &allowed)) ++cpu;
+    require(cpu < 64, "Thread fixture requires an allowed CPU below 64");
+    Mode rules; rules.bindCore.push_back({"CostWorker", uint64_t{1} << cpu});
+    threads.apply(child, start, rules, true, 0);
+    require(threads.bound() == 3 && threads.scans() == 1 && threads.journalWrites() == 1,
+            "New thread originals were not persisted once per scan");
+    threads.apply(child, start, rules, true, 1000);
+    require(threads.scans() == 2 && threads.journalWrites() == 1, "Unchanged scan rewrote the journal");
+    threads.apply(child, start, empty, true, 2000);
+    require(threads.bound() == 0 && threads.scans() == 2 && threads.journalWrites() == 2,
+            "Rule removal failed to restore without scanning");
+    std::cout << "RECURRING_COST_OK scans_60s=20 old=60 stable_renewals_10s=5 old=10"
+              << " journal_writes_3_threads=1 old=3 empty_rules_scans=0\n";
 }
 void threadRecovery(const std::filesystem::path& directory) {
     cpu_set_t possible; CPU_ZERO(&possible);
@@ -401,8 +772,12 @@ int main(int argc, char** argv) {
         real(argv[1], argv[2]); real(argv[3], argv[4]);
         std::filesystem::create_directories(argv[5]);
         synthetic(argv[5]);
+        feedback(argv[5]);
+        scenes(argv[5]);
         threadRules();
         threadRecovery(argv[5]);
+        recurringCost(argv[5]);
+        jankFeedback(argv[5]);
         return 0;
     } catch (const std::exception& e) { std::cerr << "FAIL " << e.what() << '\n'; return 1; }
 }

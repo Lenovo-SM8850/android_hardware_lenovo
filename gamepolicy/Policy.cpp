@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cmath>
 #include <sstream>
+#include <set>
 #include <stdexcept>
 
 namespace gamepolicy {
@@ -31,6 +32,19 @@ int resource(const std::string& name) {
     for (int i = 0; i < 3; ++i) if (kNames[i] == name) return i;
     return -1;
 }
+Band frequencies(const tinyxml2::XMLElement* parent, double temperature = 0) {
+    Band band{temperature, {}};
+    for (auto item = parent->FirstChildElement("item"); item; item = item->NextSiblingElement("item")) {
+        if (attr(item, "type") != "freq") continue;
+        const int r = resource(attr(item, "name"));
+        if (r < 0) continue;
+        const auto pair = value(item);
+        const auto split = pair.find('_');
+        if (split == std::string::npos) throw std::runtime_error("Invalid frequency pair");
+        band.bounds[r] = {integer(pair.substr(0, split)), integer(pair.substr(split + 1))};
+    }
+    return band;
+}
 bool supported(const std::string& mode) {
     return mode == "Balance" || mode == "Savage" || mode == "PowerSave";
 }
@@ -38,6 +52,8 @@ bool allowedCase(int code) { return code == 0 || code == 100 || code == 200 || c
 // These resources map to carried cgroup and KGSL nodes on both targets.
 constexpr int kUclamp = 0x40CAC000;
 constexpr int kGpuDefault = 0x42800000;
+constexpr int kGoldCores = 0x41000000;
+constexpr int kPrimeCores = 0x41000200;
 
 std::string optionValue(const tinyxml2::XMLElement* e) {
     if (!e->GetText()) throw std::runtime_error("Missing element text");
@@ -80,6 +96,23 @@ void threadOptions(const tinyxml2::XMLElement* parent, Mode& mode,
                 (enabled != 0 && enabled != 1)) throw std::runtime_error("Invalid FIFO rule");
             mode.schedulers.push_back({name, std::clamp(priority, 1, 99), enabled == 1});
         });
+        else if (kind == "FpsAdjustLevel" || kind == "JankAdjustLevel") attempt(e, [&] {
+            std::istringstream input(optionValue(e));
+            std::array<int, 3> deltas{};
+            std::string part;
+            for (int& delta : deltas) {
+                if (!std::getline(input, part, ',')) throw std::runtime_error("Invalid adjustment levels");
+                delta = integer(part);
+                if (delta < 0) throw std::runtime_error("Invalid adjustment level");
+            }
+            if (input.peek() != EOF || part.empty() || optionValue(e).back() == ',')
+                throw std::runtime_error("Invalid adjustment levels");
+            (kind == "FpsAdjustLevel" ? mode.fpsAdjust : mode.jankAdjust) = deltas;
+        });
+        else if (kind == "JankAdjustTime") attempt(e, [&] {
+            mode.jankAdjustTime = integer(optionValue(e));
+        });
+        // FpsAdjustTime is intentionally unused: the controller restores after 500 ms.
         else if (kind == "DelayTime") attempt(e, [&] {
             const int delay = integer(optionValue(e));
             if (delay < 0) throw std::runtime_error("Invalid delay");
@@ -158,12 +191,32 @@ bool Policy::load(const std::string& stock, const std::string& overrides, std::s
             if (!overlay.aliases.emplace(attr(a, "pkg"), alias).second)
                 throw std::runtime_error("Duplicate alias");
         }
+        if (auto base = root->FirstChildElement("BaseInfo")) {
+            for (auto game = base->FirstChildElement("Game"); game; game = game->NextSiblingElement("Game")) {
+                auto& list = sceneLists[attr(game, "name")];
+                for (auto lists = game->FirstChildElement("SceneList"); lists; lists = lists->NextSiblingElement("SceneList")) {
+                    for (auto entry = lists->FirstChildElement("scene"); entry; entry = entry->NextSiblingElement("scene")) {
+                        const int id = integer(value(entry));
+                        if (id < 0 || id > 100000) throw std::runtime_error("Invalid scene metadata");
+                        list.push_back(id);
+                    }
+                }
+            }
+        }
         auto policies = root->FirstChildElement("GamePolicy");
         if (!policies) throw std::runtime_error("Missing GamePolicy");
         for (auto game = policies->FirstChildElement("Game"); game; game = game->NextSiblingElement("Game")) {
             std::map<std::string, Mode> modes;
             Mode defaults;
             threadOptions(game, defaults, diagnostics, attr(game, "pkg"));
+            for (auto opt = game->FirstChildElement("SceneOpt"); opt; opt = opt->NextSiblingElement("SceneOpt")) {
+                for (auto row = opt->FirstChildElement("Scene"); row; row = row->NextSiblingElement("Scene")) {
+                    const int id = integer(attr(row, "id")), time = integer(attr(row, "time"));
+                    if (id < 0 || id > 100000 || time <= 0) throw std::runtime_error("Invalid scene row");
+                    if (!defaults.scenes.emplace(id, Scene{time, frequencies(row)}).second)
+                        throw std::runtime_error("Duplicate scene row");
+                }
+            }
             auto sensor = game->FirstChildElement("ThermalTempType");
             if (sensor && integer(value(sensor)) != 11) throw std::runtime_error("Unsupported sensor type");
             for (auto m = game->FirstChildElement("Mode"); m; m = m->NextSiblingElement("Mode")) {
@@ -172,9 +225,13 @@ bool Policy::load(const std::string& stock, const std::string& overrides, std::s
                 auto ms = m->FirstChildElement("ThermalTempType");
                 if (ms && integer(value(ms)) != 11) throw std::runtime_error("Unsupported mode sensor");
                 Mode mode;
+                mode.scenes = defaults.scenes;
                 mode.delayMs = defaults.delayMs;
                 const auto context = attr(game, "pkg") + "/" + name;
                 threadOptions(m, mode, diagnostics, context);
+                if (!mode.fpsAdjust) mode.fpsAdjust = defaults.fpsAdjust;
+                if (!mode.jankAdjust) mode.jankAdjust = defaults.jankAdjust;
+                if (mode.jankAdjustTime <= 0) mode.jankAdjustTime = defaults.jankAdjustTime;
                 if (mode.bindCore.empty()) mode.bindCore = defaults.bindCore;
                 // The source map iterates by signed string hash, with insertion order
                 // for collisions. This matters when broad names overlap specific ones.
@@ -187,10 +244,12 @@ bool Policy::load(const std::string& stock, const std::string& overrides, std::s
                         try {
                             if (std::string(opcode->Name()) != "opcode") throw std::runtime_error("Unknown hint entry");
                             const int op = integer(id);
-                            if (op != kUclamp && op != kGpuDefault) throw std::runtime_error("Unmapped resource");
+                            if (op != kUclamp && op != kGpuDefault && op != kGoldCores && op != kPrimeCores)
+                                throw std::runtime_error("Unmapped resource");
                             if (integer(attr(opcode, "time")) != 0) throw std::runtime_error("Nonzero duration");
                             const int n = integer(optionValue(opcode));
-                            const int max = op == kUclamp ? 100 : static_cast<int>(mDeclared[2].size()) - 1;
+                            const int max = op == kUclamp ? 100 : op == kGpuDefault ?
+                                    static_cast<int>(mDeclared[2].size()) - 1 : INT32_MAX;
                             if (n < 0 || n > max) throw std::runtime_error("Value out of range");
                             mode.perfHints.push_back({op, n});
                         } catch (const std::exception& e) {
@@ -207,18 +266,9 @@ bool Policy::load(const std::string& stock, const std::string& overrides, std::s
                 }
                 auto policy = m->FirstChildElement("Policy");
                 if (policy) for (auto t = policy->FirstChildElement("TempLevel"); t; t = t->NextSiblingElement("TempLevel")) {
-                    Band b{std::stod(attr(t, "temp")), {}};
+                    Band b = frequencies(t, std::stod(attr(t, "temp")));
                     if (!std::isfinite(b.temperature) || (!mode.bands.empty() && b.temperature < mode.bands.back().temperature))
                         throw std::runtime_error("Invalid temperature bands");
-                    for (auto item = t->FirstChildElement("item"); item; item = item->NextSiblingElement("item")) {
-                        if (attr(item, "type") != "freq") continue;
-                        int r = resource(attr(item, "name"));
-                        if (r < 0) continue;
-                        const auto pair = value(item);
-                        const auto split = pair.find('_');
-                        if (split == std::string::npos) throw std::runtime_error("Invalid frequency pair");
-                        b.bounds[r] = {integer(pair.substr(0, split)), integer(pair.substr(split + 1))};
-                    }
                     mode.bands.push_back(b);
                 }
                 modes.emplace(name, std::move(mode));
@@ -257,7 +307,7 @@ bool Policy::aliasesValid(std::string* error) const {
     return valid;
 }
 
-void Policy::resolve(const Opps& actual) {
+void Policy::resolve(const Opps& actual, const std::array<int, 2>& coreCounts) {
     if (mResolved) return;
     mResolved = true;
     Opps tables = actual;
@@ -272,6 +322,13 @@ void Policy::resolve(const Opps& actual) {
         auto& hints = mode.perfHints;
         const auto context = pkg + "/" + name;
         hints.erase(std::remove_if(hints.begin(), hints.end(), [&](PerfHint& hint) {
+            if (hint.opcode == kGoldCores || hint.opcode == kPrimeCores) {
+                const int count = coreCounts[hint.opcode == kGoldCores ? 0 : 1];
+                if (count > 0 && hint.value >= 0 && hint.value <= count) return false;
+                diagnostics.push_back(context + "/PerfHint " +
+                    (hint.opcode == kGoldCores ? "0x41000000" : "0x41000200") + ": Value out of topology range");
+                return true;
+            }
             if (hint.opcode != kGpuDefault) return false;
             const int wanted = std::min(mDeclared[2][hint.value], overlay.ceilings[2]);
             for (size_t i = 0; i < tables[2].size(); ++i) if (tables[2][i] <= wanted) {
@@ -282,45 +339,69 @@ void Policy::resolve(const Opps& actual) {
             return true;
         }), hints.end());
     }
-    for (auto& [pkg, modes] : games) for (auto& [name, mode] : modes) for (auto& b : mode.bands) {
-        for (int r = 0; r < 3; ++r) {
-            auto& bound = b.bounds[r];
-            const auto& declared = mDeclared[r];
-            const auto& table = tables[r];
-            if (table.empty()) {
-                diagnostics.push_back(pkg + "/" + name + "/" + kNames[r] + ": Missing OPP table");
-                bound = {}; continue;
+    for (auto& [pkg, modes] : games) for (auto& [name, mode] : modes) {
+        const auto& sourceBands = mode.bands;
+        auto adjusted = [&](const auto& deltas) {
+            auto bands = sourceBands;
+            if (deltas) for (auto& b : bands) for (int r = 0; r < 3; ++r) {
+            const int last = static_cast<int>(mDeclared[r].size()) - 1;
+            for (int* index : {&b.bounds[r].floor, &b.bounds[r].ceiling}) {
+                // Omitted indices are never adjusted; normal safety caps still apply below.
+                if (*index == -1) continue;
+                const int64_t shifted = static_cast<int64_t>(*index) +
+                        (r == 2 ? -static_cast<int64_t>((*deltas)[r]) : (*deltas)[r]);
+                *index = std::clamp<int64_t>(shifted, 0, last);
             }
-            const int last = static_cast<int>(declared.size()) - 1;
-            const Bounds original = bound;
-            // -1 omits a request. All other indices are independently bounded;
-            // a bad floor must never discard an otherwise valid ceiling.
-            if (bound.floor != -1) bound.floor = std::clamp(bound.floor, 0, last);
-            if (bound.ceiling != -1) bound.ceiling = std::clamp(bound.ceiling, 0, last);
-            if (bound.floor != original.floor || bound.ceiling != original.ceiling) {
-                diagnostics.push_back(pkg + "/" + name + "/" + kNames[r] + " temp=" + std::to_string(b.temperature) +
-                    ": Clamped indices " + std::to_string(original.floor) + "_" + std::to_string(original.ceiling) +
-                    " -> " + std::to_string(bound.floor) + "_" + std::to_string(bound.ceiling));
             }
-            // Both bounds are expressed as frequencies until the last conversion. Never
-            // round a request upward or let a floor exceed the hard/effective ceiling.
-            auto roundDown = [&](int wanted) {
-                int found = -1;
-                for (int f : table) if (f <= wanted) found = std::max(found, f);
-                return found;
-            };
-            int ceiling = roundDown(std::min(bound.ceiling < 0 ? overlay.ceilings[r] : declared[bound.ceiling], overlay.ceilings[r]));
-            int floor = bound.floor < 0 ? -1 : roundDown(std::min(declared[bound.floor], ceiling));
-            if (ceiling < 0 || (bound.floor >= 0 && floor < 0)) {
-                diagnostics.push_back(pkg + "/" + name + "/" + kNames[r] + ": No safe OPP");
-                bound = {}; continue;
-            }
-            if (r == 2) {
-                bound.floor = floor < 0 ? -1 : std::find(table.begin(), table.end(), floor) - table.begin();
-                bound.ceiling = std::find(table.begin(), table.end(), ceiling) - table.begin();
-            } else {
-                bound.floor = floor < 0 ? -1 : floor / 1000;
-                bound.ceiling = ceiling / 1000;
+            return bands;
+        };
+        mode.boostedBands = adjusted(mode.fpsAdjust);
+        mode.jankBands = adjusted(mode.jankAdjust);
+        std::vector<Band*> rows;
+        for (auto* bands : {&mode.bands, &mode.boostedBands, &mode.jankBands})
+            for (auto& b : *bands) rows.push_back(&b);
+        for (auto& [id, scene] : mode.scenes) rows.push_back(&scene.frequencies);
+        for (auto row : rows) {
+            auto& b = *row;
+            for (int r = 0; r < 3; ++r) {
+                auto& bound = b.bounds[r];
+                const auto& declared = mDeclared[r];
+                const auto& table = tables[r];
+                if (table.empty()) {
+                    diagnostics.push_back(pkg + "/" + name + "/" + kNames[r] + ": Missing OPP table");
+                    bound = {}; continue;
+                }
+                const int last = static_cast<int>(declared.size()) - 1;
+                const Bounds original = bound;
+                // -1 omits a request. All other indices are independently bounded;
+                // a bad floor must never discard an otherwise valid ceiling.
+                if (bound.floor != -1) bound.floor = std::clamp(bound.floor, 0, last);
+                if (bound.ceiling != -1) bound.ceiling = std::clamp(bound.ceiling, 0, last);
+                if (bound.floor != original.floor || bound.ceiling != original.ceiling) {
+                    diagnostics.push_back(pkg + "/" + name + "/" + kNames[r] + " temp=" + std::to_string(b.temperature) +
+                        ": Clamped indices " + std::to_string(original.floor) + "_" + std::to_string(original.ceiling) +
+                        " -> " + std::to_string(bound.floor) + "_" + std::to_string(bound.ceiling));
+                }
+                // Both bounds are expressed as frequencies until the last conversion. Never
+                // round a request upward or let a floor exceed the hard/effective ceiling.
+                auto roundDown = [&](int wanted) {
+                    int found = -1;
+                    for (int f : table) if (f <= wanted) found = std::max(found, f);
+                    return found;
+                };
+                int ceiling = roundDown(std::min(bound.ceiling < 0 ? overlay.ceilings[r] : declared[bound.ceiling], overlay.ceilings[r]));
+                int floor = bound.floor < 0 ? -1 : roundDown(std::min(declared[bound.floor], ceiling));
+                if (ceiling < 0 || (bound.floor >= 0 && floor < 0)) {
+                    diagnostics.push_back(pkg + "/" + name + "/" + kNames[r] + ": No safe OPP");
+                    bound = {}; continue;
+                }
+                if (r == 2) {
+                    bound.floor = floor < 0 ? -1 : std::find(table.begin(), table.end(), floor) - table.begin();
+                    bound.ceiling = std::find(table.begin(), table.end(), ceiling) - table.begin();
+                } else {
+                    bound.floor = floor < 0 ? -1 : floor / 1000;
+                    bound.ceiling = ceiling / 1000;
+                }
             }
         }
     }
@@ -380,9 +461,91 @@ std::vector<int> Policy::resources(const Band& band) {
     return args;
 }
 
-std::vector<int> Policy::resources(const Mode& mode, int band) {
-    auto args = band >= 0 && static_cast<size_t>(band) < mode.bands.size() ? resources(mode.bands[band]) : std::vector<int>{};
+std::vector<int> Policy::resources(const Mode& mode, int band, bool boosted, bool jank) {
+    const auto& bands = boosted ? mode.boostedBands : jank ? mode.jankBands : mode.bands;
+    auto args = band >= 0 && static_cast<size_t>(band) < bands.size() ? resources(bands[band]) : std::vector<int>{};
     for (const auto& hint : mode.perfHints) { args.push_back(hint.opcode); args.push_back(hint.value); }
     return args;
+}
+
+bool Policy::fpsEnabled(const Mode& mode, const std::string& profile, std::optional<int> scene) {
+    return mode.fpsAdjust && sceneEnabled(profile, scene);
+}
+
+bool Policy::jankEnabled(const Mode& mode, const std::string& profile, std::optional<int> scene) {
+    return mode.jankAdjust && mode.jankAdjustTime > 0 && sceneEnabled(profile, scene);
+}
+
+bool Policy::sceneEnabled(const std::string& profile, std::optional<int> scene) {
+    if (profile == "com.tencent.tmgp.pubgmhd" || profile == "com.tencent.tmgp.projectg")
+        return scene && *scene >= 103 && *scene != 110 && *scene != 111;
+    if (profile == "com.tencent.tmgp.sgame" || profile == "com.tencent.tmgp.sgamece")
+        return scene == 7;
+    return true;
+}
+
+bool SceneController::report(int64_t now, int scene, const Mode& mode) {
+    if (scene < 0 || scene > 100000) return false;
+    const bool changed = mScene != scene;
+    cancel();
+    mScene = scene;
+    const auto row = mode.scenes.find(scene);
+    if (row != mode.scenes.end()) {
+        mRow = &row->second;
+        mDeadline = now + mRow->timeMs;
+    }
+    return changed;
+}
+
+std::vector<int> SceneController::resources(int64_t now, const Mode& mode, int band, bool boosted, bool jank) const {
+    if (!active(now)) return Policy::resources(mode, band, boosted, jank);
+    auto args = Policy::resources(mRow->frequencies);
+    for (const auto& hint : mode.perfHints) { args.push_back(hint.opcode); args.push_back(hint.value); }
+    return args;
+}
+
+void FpsController::reset(int64_t now) {
+    mStart = now; invalidate();
+}
+
+bool FpsController::sample(int64_t now, float fps, bool enabled) {
+    if (!enabled || now - mStart < 3000 || !std::isfinite(fps) || fps < 0) return false;
+    while (mCount && now - mSamples[mHead].time >= 5000) {
+        mHead = (mHead + 1) % mSamples.size(); --mCount;
+    }
+    const auto last = (mHead + mCount + mSamples.size() - 1) % mSamples.size();
+    if (mCount && now - mSamples[last].time < 400) return false;
+    const float previous = mCount ? mSamples[last].fps : 0;
+    // Fixed storage covers every callback in five seconds at the 400 ms admission limit.
+    if (mCount == mSamples.size()) { mHead = (mHead + 1) % mSamples.size(); --mCount; }
+    mSamples[(mHead + mCount) % mSamples.size()] = {now, fps}; ++mCount;
+    float total = 0;
+    for (size_t i = 0; i < mCount; ++i) total += mSamples[(mHead + i) % mSamples.size()].fps;
+    const double mean = total / static_cast<float>(mCount);
+    if (fps > 0.965 * mean) mDip = false;
+    // Rejected low/outlier samples remain in the time window, as before.
+    if (fps < 10 || previous - fps > previous * 0.8 || active(now) ||
+        fps <= 0.6 * mean || fps >= 0.965 * mean || (mDip && now - mLastBoost < 2000)) return false;
+    mBoostUntil = now + 500;
+    mDip = true; mLastBoost = now;
+    return true;
+}
+
+std::array<float, 5> FpsController::history() const {
+    std::array<float, 5> result{};
+    const auto count = std::min(result.size(), mCount);
+    for (size_t i = 0; i < count; ++i)
+        result[result.size() - count + i] = mSamples[(mHead + mCount - count + i) % mSamples.size()].fps;
+    return result;
+}
+
+int coreCount(const std::string& relatedCpus) {
+    std::istringstream input(relatedCpus);
+    std::set<int> cpus;
+    int cpu;
+    while (input >> cpu) {
+        if (cpu < 0 || cpu >= 64 || !cpus.insert(cpu).second) return 0;
+    }
+    return input.eof() ? static_cast<int>(cpus.size()) : 0;
 }
 } // namespace gamepolicy
