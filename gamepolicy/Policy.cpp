@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cmath>
 #include <sstream>
+#include <set>
 #include <stdexcept>
 
 namespace gamepolicy {
@@ -38,6 +39,8 @@ bool allowedCase(int code) { return code == 0 || code == 100 || code == 200 || c
 // These resources map to carried cgroup and KGSL nodes on both targets.
 constexpr int kUclamp = 0x40CAC000;
 constexpr int kGpuDefault = 0x42800000;
+constexpr int kGoldCores = 0x41000000;
+constexpr int kPrimeCores = 0x41000200;
 
 std::string optionValue(const tinyxml2::XMLElement* e) {
     if (!e->GetText()) throw std::runtime_error("Missing element text");
@@ -187,10 +190,12 @@ bool Policy::load(const std::string& stock, const std::string& overrides, std::s
                         try {
                             if (std::string(opcode->Name()) != "opcode") throw std::runtime_error("Unknown hint entry");
                             const int op = integer(id);
-                            if (op != kUclamp && op != kGpuDefault) throw std::runtime_error("Unmapped resource");
+                            if (op != kUclamp && op != kGpuDefault && op != kGoldCores && op != kPrimeCores)
+                                throw std::runtime_error("Unmapped resource");
                             if (integer(attr(opcode, "time")) != 0) throw std::runtime_error("Nonzero duration");
                             const int n = integer(optionValue(opcode));
-                            const int max = op == kUclamp ? 100 : static_cast<int>(mDeclared[2].size()) - 1;
+                            const int max = op == kUclamp ? 100 : op == kGpuDefault ?
+                                    static_cast<int>(mDeclared[2].size()) - 1 : INT32_MAX;
                             if (n < 0 || n > max) throw std::runtime_error("Value out of range");
                             mode.perfHints.push_back({op, n});
                         } catch (const std::exception& e) {
@@ -257,7 +262,7 @@ bool Policy::aliasesValid(std::string* error) const {
     return valid;
 }
 
-void Policy::resolve(const Opps& actual) {
+void Policy::resolve(const Opps& actual, const std::array<int, 2>& coreCounts) {
     if (mResolved) return;
     mResolved = true;
     Opps tables = actual;
@@ -272,6 +277,13 @@ void Policy::resolve(const Opps& actual) {
         auto& hints = mode.perfHints;
         const auto context = pkg + "/" + name;
         hints.erase(std::remove_if(hints.begin(), hints.end(), [&](PerfHint& hint) {
+            if (hint.opcode == kGoldCores || hint.opcode == kPrimeCores) {
+                const int count = coreCounts[hint.opcode == kGoldCores ? 0 : 1];
+                if (count > 0 && hint.value >= 0 && hint.value <= count) return false;
+                diagnostics.push_back(context + "/PerfHint " +
+                    (hint.opcode == kGoldCores ? "0x41000000" : "0x41000200") + ": Value out of topology range");
+                return true;
+            }
             if (hint.opcode != kGpuDefault) return false;
             const int wanted = std::min(mDeclared[2][hint.value], overlay.ceilings[2]);
             for (size_t i = 0; i < tables[2].size(); ++i) if (tables[2][i] <= wanted) {
@@ -384,5 +396,15 @@ std::vector<int> Policy::resources(const Mode& mode, int band) {
     auto args = band >= 0 && static_cast<size_t>(band) < mode.bands.size() ? resources(mode.bands[band]) : std::vector<int>{};
     for (const auto& hint : mode.perfHints) { args.push_back(hint.opcode); args.push_back(hint.value); }
     return args;
+}
+
+int coreCount(const std::string& relatedCpus) {
+    std::istringstream input(relatedCpus);
+    std::set<int> cpus;
+    int cpu;
+    while (input >> cpu) {
+        if (cpu < 0 || cpu >= 64 || !cpus.insert(cpu).second) return 0;
+    }
+    return input.eof() ? static_cast<int>(cpus.size()) : 0;
 }
 } // namespace gamepolicy

@@ -43,7 +43,7 @@ class Policy {
     std::string version;
     bool load(const std::string& stock, const std::string& overrides, std::string* error);
     // Resolve every index once, before any session can request a resource.
-    void resolve(const Opps& actual);
+    void resolve(const Opps& actual, const std::array<int, 2>& coreCounts = {});
     Selection select(const std::string& package, int mode) const;
     bool aliasesValid(std::string* error) const;
     static size_t band(const Mode& mode, double temperature, int previous, double hysteresis);
@@ -56,4 +56,18 @@ class Policy {
     Opps mDeclared;
     bool mResolved = false;
 };
+
+// Monotonic milliseconds are supplied by the caller, making deadlines testable.
+class SessionGate {
+  public:
+    void start(int64_t now, int delayMs) { mDeadline = now + delayMs; }
+    void modeChanged() { mDeadline = 0; }
+    bool ready(int64_t now) const { return now >= mDeadline; }
+    int64_t deadline() const { return mDeadline; }
+  private:
+    int64_t mDeadline = 0;
+};
+
+// related_cpus is a whitespace-separated list, independent of online CPU state.
+int coreCount(const std::string& relatedCpus);
 } // namespace gamepolicy

@@ -36,6 +36,8 @@ void real(const char* stock, const char* overlay) {
     require(policy.aliasesValid(&error), "Device overlay contains dangling alias");
     const Policy unresolved = policy;
     size_t hints = 0, bound = 0, rt = 0, delays = 0;
+    const auto actual = sample(stock);
+    policy.resolve(actual, {6, 2});
     std::map<int, size_t> accepted, dropped;
     for (const auto& [pkg, modes] : policy.games) for (const auto& [name, mode] : modes) {
         hints += mode.perfHints.size(); bound += mode.bindCore.size(); rt += mode.schedulers.size();
@@ -43,7 +45,9 @@ void real(const char* stock, const char* overlay) {
         for (const auto& hint : mode.perfHints) {
             ++accepted[hint.opcode];
             require((hint.opcode == 0x40CAC000 && hint.value >= 0 && hint.value <= 100) ||
-                    hint.opcode == 0x42800000, "Unallowlisted real hint");
+                    hint.opcode == 0x42800000 ||
+                    (hint.opcode == 0x41000000 && hint.value >= 0 && hint.value <= 6) ||
+                    (hint.opcode == 0x41000200 && hint.value >= 0 && hint.value <= 2), "Unallowlisted real hint");
         }
     }
     for (const auto& diagnostic : policy.diagnostics) {
@@ -52,10 +56,14 @@ void real(const char* stock, const char* overlay) {
     }
     require(hints > 100 && bound > 200 && rt >= 6 && delays >= 3, "Missing phase 2 real coverage");
     if (policy.version == "20260907")
-        require(hints == 198 && bound == 509 && rt == 102 && delays == 22, "Unexpected wuji phase 2 counts");
+        require(accepted[0x40CAC000] == 191 && accepted[0x42800000] == 7 && bound == 509 && rt == 102 && delays == 22,
+                "Unexpected wuji retained phase 2 counts");
     else if (policy.version == "20260721")
-        require(hints == 174 && bound == 385 && rt == 12 && delays == 10, "Unexpected baldur phase 2 counts");
-    require(dropped[0x41000000] > 0 && dropped[0x41000200] > 0, "Unmapped core resources accepted");
+        require(accepted[0x40CAC000] == 174 && bound == 385 && rt == 12 && delays == 10,
+                "Unexpected baldur retained phase 2 counts");
+    require(accepted[0x41000000] > 0 && accepted[0x41000200] > 0, "Core resources missing");
+    require(accepted[0x41000000] + accepted[0x41000200] == (policy.version == "20260907" ? 51 : 16) &&
+            dropped[0x41000100] == (policy.version == "20260907" ? 2 : 0), "Unexpected phase 3 min-core counts");
     require(policy.version != "20260721" || dropped[0x40400000] > 0, "Unmapped extra resource accepted");
     std::cout << "PHASE2_COUNTS version=" << policy.version << " perf_pairs=" << hints << " bind_rules=" << bound
               << " rt_rules=" << rt << " delayed_modes=" << delays << '\n';
@@ -63,8 +71,6 @@ void real(const char* stock, const char* overlay) {
         std::cout << "PERF_ACCEPT opcode=0x" << std::hex << opcode << std::dec << " count=" << count << '\n';
     for (auto [opcode, count] : dropped) if (count)
         std::cout << "PERF_DROP opcode=0x" << std::hex << opcode << std::dec << " count=" << count << '\n';
-    const auto actual = sample(stock);
-    policy.resolve(actual);
     int clamped = 0;
     for (const auto& [pkg, definitions] : unresolved.games) for (const auto& [name, mode] : definitions) {
         for (size_t i = 0; i < mode.bands.size(); ++i) for (int r = 0; r < 3; ++r) {
@@ -276,7 +282,7 @@ void threadRules() {
     auto copy = mode;
     copy.thermalCase = 400; copy.perfHints = {{0x40CAC000, 10}};
     require(sameThreadRules(mode, copy), "Unrelated mode fields triggered thread restore");
-    copy.delayMs = 1; require(!sameThreadRules(mode, copy), "Delay diff missed"); copy = mode;
+    copy.delayMs = 1; require(sameThreadRules(mode, copy), "Whole-policy delay affected thread rule equality"); copy = mode;
     copy.bindCore[0].mask = 1; require(!sameThreadRules(mode, copy), "Mask diff missed"); copy = mode;
     copy.schedulers[0].priority = 96; require(!sameThreadRules(mode, copy), "RT diff missed"); copy = mode;
     copy.schedulers[0].enabled = false; require(!sameThreadRules(mode, copy), "Enable diff missed");
