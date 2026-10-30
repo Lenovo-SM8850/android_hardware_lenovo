@@ -185,6 +185,8 @@ int diag_callback_send_data(int, unsigned char* request, int length) {
 #include <thread>
 #include "MbnParser.h"
 #include "Transaction.h"
+#include "FirmwareGeneration.h"
+#include <fstream>
 #include "Recovery.h"
 #include "EfsDiagnostics.h"
 
@@ -241,6 +243,8 @@ class FakeEfs final : public EfsTransport {
                const std::function<void()>& checkpoint) override {
         require(!forbiddenPaths.count(path), "forbidden EFS write forbidden");
         if (checkpoint) checkpoint();
+        // Match EfsClient's write-owned parent check.
+        checkParent(path);
         // Exercise the actual serialized WAL, not an in-memory state flag.
         const auto wal = parseJson(readFile(journal, 40 * 1024 * 1024));
         check(wal["state"] == "applying" && !wal["token"].asString().empty() &&
@@ -1293,6 +1297,170 @@ void recoveryTests(ProfileStore& store, const std::string& scratch) {
 }
 
 }  // namespace
+
+static void firmwareGenerationTests(ProfileStore& store, const std::string& scratch) {
+    const auto bytes = [](const std::string& s) { return Bytes(s.begin(), s.end()); };
+    check(parseFirmwareGeneration(bytes(R"({"Image_Build_IDs":{"modem":"MPSS.test"}})")) ==
+                  "MPSS.test", "modem generation JSON string");
+    for (const auto& invalid : {"{}", "garbage", "{", R"({"Image_Build_IDs":{"modem":7}})",
+                               R"({"Image_Build_IDs":{"modem":""}})"})
+        check(parseFirmwareGeneration(bytes(invalid)).empty(), "invalid generation defers");
+    check(parseFirmwareGeneration(Bytes(kFirmwareInfoLimit + 1, ' ')).empty(),
+          "oversize generation defers");
+    const auto dir = scratch + "/firmware";
+    fs::create_directories(dir);
+    const auto info = dir + "/ver_info.txt";
+    { std::ofstream file(info); file << R"({"Image_Build_IDs":{"modem":"g1"}})"; }
+    FirmwareGeneration cached(info);
+    check(cached.get() == "g1", "generation file read");
+    { std::ofstream file(info); file << "garbage"; }
+    check(cached.get() == "g1", "one metadata read per daemon");
+    FirmwareGeneration invalid(info), missing(dir + "/missing");
+    check(invalid.get().empty() && missing.get().empty(), "unreadable/unparseable generation defers");
+    check(invalid.get().empty() && missing.get().empty(), "failed reads remain retryable");
+    { std::ofstream file(info); file << R"({"Image_Build_IDs":{"modem":"g2"}})"; }
+    { std::ofstream file(dir + "/missing"); file << R"({"Image_Build_IDs":{"modem":"g3"}})"; }
+    check(invalid.get() == "g2" && missing.get() == "g3", "next call retries after parse/open failure");
+    { std::ofstream file(info); file << "garbage"; }
+    check(invalid.get() == "g2", "successful retry is cached");
+    FakeEfs efs;
+    efs.files = base(store);
+    efs.files[kControl] = Bytes{7};
+    efs.journal = dir + "/journal.json";
+    std::string generation = "g1";
+    const std::string token(32, 'a');
+    const auto journal = [&] { return parseJson(readFile(efs.journal, 40 * 1024 * 1024)); };
+    const auto rewrite = [&](Json::Value wal) {
+        wal.removeMember("sha256"); wal["sha256"] = sha256(jsonBytes(wal));
+        durableWrite(efs.journal, wal);
+    };
+    efs.afterWrite = [&](int) {
+        const auto wal = journal();
+        if (wal["target_profile"].asString().empty()) return;  // Control-only restoration.
+        check(wal["repair_attempt_outcome"] == "in_progress" &&
+                      wal["target_firmware"] == generation &&
+                      !wal["repair_attempt_key"].asString().empty(),
+              "firmware attempt reservation is durable before every repair write");
+    };
+    {
+        int generationReads = 0;
+        Transaction txn(store, efs, dir, [] { return "diagnostic"; }, [] { return true; }, {}, {},
+                        [&] { ++generationReads; return generation; });
+        txn.enable(false); txn.evaluate({"45006"});
+        check(generationReads == 0, "OFF never reads firmware generation");
+        txn.enable(true); txn.apply({"45006"}, token);
+        check(journal()["applied_firmware"].asString().empty() &&
+                      journal()["target_firmware"] == "g1" &&
+                      journal()["repair_attempt_outcome"] == "in_progress",
+              "write reserves repair before stamping");
+        txn.claimRestart(token);
+        check(journal()["applied_firmware"].asString().empty(), "restart claim never stamps");
+        txn.complete(token);
+        check(journal()["applied_firmware"] == "g1" &&
+                      journal()["repair_attempt_outcome"] == "complete", "only complete stamps");
+    }
+    const int unchangedWrites = efs.writes, unchangedReads = efs.reads;
+    {
+        Transaction txn(store, efs, dir, [] { return "diagnostic"; }, [] { return true; }, {}, {},
+                        [&] { return generation; });
+        txn.evaluate({"45006"}); txn.apply({"45006"}, token);
+        check(txn.status().state == "committed" && efs.writes == unchangedWrites &&
+                      efs.reads == unchangedReads, "current generation no write or restart");
+    }
+    auto migrated = journal(); migrated.removeMember("applied_firmware"); rewrite(migrated);
+    {
+        Transaction txn(store, efs, dir, [] { return "diagnostic"; }, [] { return true; }, {}, {},
+                        [&] { return generation; });
+        txn.evaluate({"45006"});
+        check(txn.status().state == "checking", "migration invalidates committed no-op");
+        txn.apply({"45006"}, token);
+        check(efs.written[unchangedWrites].first == kControl &&
+                      efs.written[unchangedWrites].second == Bytes{0},
+              "same-profile migration repair skips 07 baseline");
+        txn.claimRestart(token); txn.complete(token);
+        check(journal()["applied_firmware"] == "g1", "migration repair stamps current generation");
+    }
+    generation = "g2";
+    {
+        Transaction txn(store, efs, dir, [] { return "diagnostic"; }, [] { return true; }, {}, {},
+                        [&] { return generation; });
+        efs.failReadPath = kControl;
+        throws([&] { txn.apply({"45006"}, token); }, "pre-write readiness failure");
+        check(journal()["repair_attempt_outcome"] != "failed", "readiness wait consumes no attempt");
+        efs.failReadPath.clear();
+        efs.failAt = efs.writes + 1;
+        throws([&] { txn.apply({"45006"}, token); }, "repair write failure");
+        check(txn.status().state == "firmware_repair_blocked" &&
+                      journal()["repair_attempt_outcome"] == "failed" &&
+                      journal()["applied_firmware"] == "g1", "failed repair blocks and keeps old stamp");
+    }
+    const int blockedWrites = efs.writes;
+    {
+        Transaction txn(store, efs, dir, [] { return "diagnostic"; }, [] { return true; }, {}, {},
+                        [&] { return generation; });
+        const int reads = efs.reads;
+        check(txn.firmwareRepairBlocked("Korea/LGU/Commercial") && efs.reads == reads,
+              "journal-only blocked status projection never opens DIAG/EFS");
+        txn.evaluate({"45006"}); txn.apply({"45006"}, token);
+        check(txn.status().state == "firmware_repair_blocked" && efs.writes == blockedWrites,
+              "failed key remains blocked across daemon/AP restart");
+        txn.enable(true); // Explicit user Apply grants a fresh attempt.
+        txn.apply({"45006"}, token); txn.claimRestart(token);
+        check(journal()["applied_firmware"] == "g1", "new transaction has not stamped yet");
+    }
+    generation = "g3";
+    {
+        Transaction txn(store, efs, dir, [] { return "diagnostic"; }, [] { return true; }, {}, {},
+                        [&] { return generation; });
+        throws([&] { txn.complete(token); }, "old-generation completion rejected");
+        check(journal()["applied_firmware"] == "g1", "old transaction never stamps a new generation");
+        txn.evaluate({"45006"}); txn.apply({"45006"}, token); txn.claimRestart(token);
+        txn.restartFailed("injected restart failure");
+        check(txn.status().state == "firmware_repair_blocked", "restart failure consumes repair key");
+        txn.enable(true); txn.apply({"45006"}, token); txn.claimRestart(token); txn.complete(token);
+        check(journal()["applied_firmware"] == "g3", "explicit Apply recovers blocked repair");
+        // A manual fresh attempt also has a durable budget on the same firmware.
+        txn.enable(true, {"45006"});
+        efs.failAt = efs.writes + 1;
+        throws([&] { txn.apply({"45006"}, token); }, "same-generation attempt failure");
+        check(txn.status().state == "firmware_repair_blocked", "same-generation attempt is bounded");
+        // Returning from an automatic unsupported-carrier restore must not act
+        // like a user Apply and erase the failed source's durable budget.
+        txn.restore(token); txn.claimRestart(token); txn.complete(token);
+        check(txn.status().enabled && txn.status().profile.empty(), "automatic restore preserves ON");
+        const int restoredWrites = efs.writes;
+        txn.evaluate({"45006"}); txn.apply({"45006"}, token);
+        check(txn.status().state == "firmware_repair_blocked" && efs.writes == restoredWrites,
+              "unsupported-carrier round trip cannot renew a failed key");
+        txn.enable(false); txn.restore(token); txn.claimRestart(token); txn.complete(token);
+        check(!txn.status().enabled && txn.status().state == "disabled", "explicit OFF still restores disabled");
+    }
+    {
+        const auto importDir = scratch + "/firmware-import";
+        fs::create_directories(importDir);
+        ProfileStore imported(scratch + "/profiles", importDir);
+        const auto id = imported.importMbn(mbnFixture(imported.load("Korea/LGU/Commercial")),
+                                          "chosen.mbn", "45006");
+        imported.chooseImported("45006", id);
+        FakeEfs chosen;
+        chosen.files = base(imported); chosen.files[kControl] = Bytes{7};
+        chosen.journal = importDir + "/journal.json";
+        generation = "g1";
+        Transaction txn(imported, chosen, importDir, [] { return "diagnostic"; },
+                        [] { return true; }, {}, {}, [&] { return generation; });
+        txn.enable(true); txn.apply({"45006"}, token); txn.claimRestart(token); txn.complete(token);
+        const int writes = chosen.writes;
+        generation = "g2";
+        txn.evaluate({"45006"}); txn.apply({"45006"}, token);
+        check(chosen.written[writes].second == Bytes{0} && txn.status().profile == id &&
+                      imported.chosenImported("45006") == id,
+              "firmware repair preserves enrolled import without a 07 reset or bundled substitution");
+        txn.claimRestart(token); txn.complete(token);
+        check(txn.status().appliedFirmware == "g2", "import repair completes exact final readback");
+    }
+    std::cout << "PASS: firmware generation parse/cache, complete-only stamp, migration, durable blocked key, old-generation completion\n";
+}
+
 int main(int argc, char** argv) {
     if (argc == 2 && std::string(argv[1]) == "--diag-session") return DiagTransport::runSession();
     if (argc == 2 && std::string(argv[1]) == "--fake-diag-cache") {
@@ -1396,6 +1564,7 @@ int main(int argc, char** argv) {
         recoveryTests(store, scratch);
         baselineResetTests(store, scratch);
         controlRestartTests(store, scratch);
+        firmwareGenerationTests(store, scratch);
         const std::string token(32, 'a');
         int scenario = 0;
         auto setup = [&] {

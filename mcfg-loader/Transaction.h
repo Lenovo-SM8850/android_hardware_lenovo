@@ -8,7 +8,7 @@
 namespace mcfg {
 struct Status {
     std::string state = "disabled", profile, modemVersion, token, error, sourceName,
-                sourceSha256, nextProfile, step;
+                sourceSha256, nextProfile, step, appliedFirmware;
     bool enabled = false, restartAttempted = false;
 };
 class TransactionLock {
@@ -28,12 +28,13 @@ class Transaction {
     Transaction(ProfileStore& store, EfsTransport& efs, std::string directory,
                 std::function<std::string()> modemVersion,
                 std::function<bool()> safe, std::shared_ptr<TransactionLock> lock = {},
-                std::function<int64_t()> clock = {});
+                std::function<int64_t()> clock = {},
+                std::function<std::string()> firmware = {});
     ~Transaction();
     const Status& status() const { return status_; }
     // 7 means exactly 07; 0 includes absent or malformed controls.
     int autoselect(bool refresh = false);
-    void enable(bool enabled);
+    void enable(bool enabled, const std::vector<std::string>& homePlmns = {});
     void evaluate(const std::vector<std::string>& homePlmns);
     void apply(const std::vector<std::string>& homePlmns, const std::string& token);
     void restore(const std::string& token);
@@ -42,6 +43,8 @@ class Transaction {
     void resumeContext(const std::vector<std::string>& homePlmns);
     void complete(const std::string& token);
     void recover();
+    void restartFailed(const char* error);
+    bool firmwareRepairBlocked(const std::string& profile) const;
     void probe();
     bool dumpReadOnly(std::ostream& output);
 
@@ -63,6 +66,12 @@ class Transaction {
     std::function<std::string()> modemVersion_;
     std::function<bool()> safe_;
     std::function<int64_t()> clock_;
+    std::function<std::string()> firmware_;
+    std::string targetFirmware_, targetProfile_, targetSha256_;
+    std::string repairKey_, repairOutcome_;
+    mutable std::string keyGeneration_, keyProfile_, keySha256_, cachedRepairKey_;
+    Json::Value repairAttempts_{Json::objectValue};
+    std::string repairKey(const std::string& profile) const;
     bool baselineReset_ = false;
     int autoselect_ = -1;
     int64_t autoselectUntil_ = 0;

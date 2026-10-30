@@ -53,6 +53,7 @@ public final class McfgCoordinatorService extends Service {
     private long verifiedEpoch = -1, verifiedConfigVersion = -1;
     private long restoredEpoch = -1;
     private volatile boolean contextSafe;
+    private volatile boolean cancelAutomaticWork;
     private SharedPreferences prefs;
     private UnsupportedCarrierNotice carrierNotice;
     private volatile Map<Integer, String> noticeIdentities = new HashMap<>();
@@ -66,22 +67,65 @@ public final class McfgCoordinatorService extends Service {
     private volatile boolean restoreRequested;
     private volatile McfgStatus lastStatus;
     private boolean tickReady;
+    private boolean reconcileRequested = true;
+    private long settleUntil;
+    private String recoveryToken = "";
+    private final Runnable settled = () -> wakeHeartbeat();
+    private final Runnable readinessRetry = () -> wakeHeartbeat();
+    private final Runnable recoveryTimeout = () -> {
+        final String token = recoveryToken;
+        transactions.execute(() -> {
+            try {
+                connect();
+                McfgStatus status = worker.getStatus();
+                if (!token.isEmpty() && token.equals(status.transactionToken)
+                        && status.restartAttempted && CoordinatorState.isRestartPending(status.state)) {
+                    if (state.canComplete(prefs.getBoolean("restart_saw_down", false),
+                            prefs.getString("restart_identity", ""), status.profileId.isEmpty(),
+                            token, prefs.getString("restart_token", "")))
+                        main.post(this::wakeHeartbeat);
+                    else {
+                        McfgStatus recovered = worker.recover();
+                        publish(recovered);
+                        if ("checking".equals(recovered.state)) main.post(this::wakeHeartbeat);
+                    }
+                }
+            } catch (Exception unavailable) {
+                report("Carrier profile service unavailable");
+            }
+        });
+    };
     private final SharedPreferences.OnSharedPreferenceChangeListener preferenceListener =
             (preferences, key) -> {
                 if ("automatic".equals(key) || "disable_requested".equals(key)
-                        || "config_version".equals(key)) wakeHeartbeat();
+                        || "config_version".equals(key)) {
+                    main.removeCallbacks(readinessRetry);
+                    if (!preferences.getBoolean("automatic", false)) {
+                        main.removeCallbacks(settled);
+                        main.removeCallbacks(recoveryTimeout);
+                        settleUntil = 0;
+                        if ("automatic".equals(key)) {
+                            cancelAutomaticWork = busy.get();
+                            contextSafe = false;
+                            sendContext();
+                        }
+                    }
+                    if ("automatic".equals(key) && preferences.getBoolean("automatic", false))
+                        readinessEvent();
+                    else wakeHeartbeat();
+                }
             };
     private final BroadcastReceiver carrierReceiver = new BroadcastReceiver() {
         @Override
         public void onReceive(Context context, Intent intent) {
-            wakeHeartbeat();
+            readinessEvent();
         }
     };
     private final SubscriptionManager.OnSubscriptionsChangedListener subListener =
             new SubscriptionManager.OnSubscriptionsChangedListener() {
                 @Override
                 public void onSubscriptionsChanged() {
-                    tick();
+                    readinessEvent();
                 }
             };
     private final Runnable heartbeat =
@@ -117,7 +161,7 @@ public final class McfgCoordinatorService extends Service {
         filter.addAction(TelephonyManager.ACTION_SIM_CARD_STATE_CHANGED);
         filter.addAction(Intent.ACTION_AIRPLANE_MODE_CHANGED);
         registerReceiver(carrierReceiver, filter, Context.RECEIVER_EXPORTED);
-        wakeHeartbeat();
+        readinessEvent();
     }
 
     @Override
@@ -149,7 +193,7 @@ public final class McfgCoordinatorService extends Service {
             requestConfiguration(prefs);
         }
         configVersion = prefs.getLong("config_version", 0);
-        tick();
+        wakeHeartbeat();
         return START_STICKY;
     }
 
@@ -167,6 +211,9 @@ public final class McfgCoordinatorService extends Service {
         contextSafe = false;
         sendContext();
         main.removeCallbacks(heartbeat);
+        main.removeCallbacks(settled);
+        main.removeCallbacks(readinessRetry);
+        main.removeCallbacks(recoveryTimeout);
         prefs.unregisterOnSharedPreferenceChangeListener(preferenceListener);
         unregisterReceiver(carrierReceiver);
         subscriptions.removeOnSubscriptionsChangedListener(subListener);
@@ -222,8 +269,21 @@ public final class McfgCoordinatorService extends Service {
 
     private void wakeHeartbeat() {
         if (transactions.isShutdown()) return;
+        reconcileRequested = true;
         tickReady = false;
         if (!main.hasCallbacks(heartbeat)) main.post(heartbeat);
+    }
+
+    private void readinessEvent() {
+        if (transactions.isShutdown()) return;
+        main.removeCallbacks(settled);
+        if (prefs.getBoolean("automatic", false)) {
+            settleUntil = SystemClock.elapsedRealtime() + 10_000;
+            contextSafe = false;
+            sendContext();
+            main.postDelayed(settled, 10_000);
+        }
+        wakeHeartbeat();
     }
 
     private void updateHeartbeat() {
@@ -289,7 +349,7 @@ public final class McfgCoordinatorService extends Service {
             }
             operators.sort(String::compareTo);
             String nextIdentity = active.isEmpty() ? "no_sim" : String.join(";", operators);
-            state.observe(nextIdentity);
+            if (state.observe(nextIdentity)) main.removeCallbacks(readinessRetry);
             home = operators.toArray(new String[0]);
             contextEpoch = state.epoch();
             noticeIdentities = identities;
@@ -297,9 +357,20 @@ public final class McfgCoordinatorService extends Service {
             noticeReady = !identities.isEmpty();
             // Revoke automatic leases immediately on removal, including queued
             // control-only completions/claims; explicit OFF can still use the radio.
-            contextSafe = CoordinatorState.shouldCoordinate(prefs.getBoolean("automatic", false), home.length);
+            boolean automatic = prefs.getBoolean("automatic", false);
+            boolean callsIdle = !callbacks.isEmpty();
+            for (SlotCallback cb : callbacks.values())
+                callsIdle &= cb.callState == TelephonyManager.CALL_STATE_IDLE;
+            contextSafe = CoordinatorState.shouldCoordinate(automatic, home.length)
+                    && !cancelAutomaticWork
+                    && (!automatic || (callsIdle && SystemClock.elapsedRealtime() >= settleUntil));
             sendContext();
-            if (!busy.getAndSet(true)) transactions.execute(this::coordinate);
+            // Automatic heartbeats only renew/revoke the lease. Explicit OFF
+            // restoration retains its existing retry/completion flow while active.
+            if ((reconcileRequested || !automatic) && !busy.getAndSet(true)) {
+                reconcileRequested = false;
+                transactions.execute(this::coordinate);
+            }
             tickReady = true;
         } catch (Exception e) {
             carrierNotice.cancel();
@@ -366,7 +437,11 @@ public final class McfgCoordinatorService extends Service {
             if (!state.retryAllowed(epoch, version, SystemClock.elapsedRealtime())) return;
             connect();
             renewContext(epoch);
-            McfgStatus status = worker.getStatus();
+            // Propagate an explicit OFF before status can read the ON journal's
+            // firmware metadata. Missing legacy preferences still migrate below.
+            boolean disabledBeforeStatus = !enabled && prefs.contains("automatic")
+                    && (configuredVersion != version || prefs.getBoolean("disable_requested", false));
+            McfgStatus status = disabledBeforeStatus ? worker.setEnabled(false) : worker.getStatus();
             // Older installs may have saved ON only in the HAL journal.
             if (CoordinatorState.shouldMigrateAutomatic(prefs.contains("automatic"), status.enabled)) {
                 prefs.edit().putBoolean("automatic", true).commit();
@@ -384,6 +459,8 @@ public final class McfgCoordinatorService extends Service {
                 publish(status);
                 verifiedEpoch = -1;
                 restoredEpoch = -1;
+                if ("checking".equals(status.state) || "error".equals(status.state))
+                    main.post(this::wakeHeartbeat);
                 return;
             }
             if (configuredVersion != version) {
@@ -396,9 +473,11 @@ public final class McfgCoordinatorService extends Service {
                         renewContext(epoch);
                         status = worker.setEnabled(true);
                     }
-                } else if (status.enabled && !prefs.getBoolean("disable_requested", false))
+                } else if ((status.enabled
+                                || (disabledBeforeStatus && !status.profileId.isEmpty()))
+                        && !prefs.getBoolean("disable_requested", false))
                     prefs.edit().putBoolean("disable_requested", true).commit();
-                if (!enabled) {
+                if (!enabled && !disabledBeforeStatus) {
                     renewContext(epoch);
                     status = worker.setEnabled(false);
                 }
@@ -519,6 +598,9 @@ public final class McfgCoordinatorService extends Service {
                                     });
                     main.post(restart);
                     restart.get();
+                    // Arm the single recovery deadline even when the helper
+                    // leaves the radio down and no loaded-SIM event follows.
+                    publish(worker.getStatus());
                 } else if (state.canComplete(
                                 prefs.getBoolean("restart_saw_down", false),
                                 prefs.getString("restart_identity", ""), status.profileId.isEmpty(),
@@ -528,6 +610,7 @@ public final class McfgCoordinatorService extends Service {
                     renewContext(epoch);
                     McfgStatus result = worker.complete(status.transactionToken);
                     publish(result);
+                    main.post(this::wakeHeartbeat);
                     if (CoordinatorState.shouldRecordApplied(result.state, result.profileId, result.sourceName)) {
                         recordApplied(epoch, version);
                     }
@@ -542,6 +625,7 @@ public final class McfgCoordinatorService extends Service {
                 return;
             }
             if (!enabled) return;
+            if ("firmware_repair_blocked".equals(status.state)) return;
             if (CoordinatorState.needsApply(verifiedEpoch, verifiedConfigVersion, epoch, version,
                             status.state, status.profileId, status.sourceName, status.candidateProfileId)
                     && !status.candidateProfileId.isEmpty()
@@ -568,10 +652,23 @@ public final class McfgCoordinatorService extends Service {
                 report("Carrier profile service unavailable");
             }
             if (version == configVersion)
-                state.attemptFailed(epoch, version, SystemClock.elapsedRealtime());
+                state.attemptFailed(epoch, version, SystemClock.elapsedRealtime(),
+                        prefs.getBoolean("automatic", false));
+            final long delay = state.retryDelay(SystemClock.elapsedRealtime());
+            main.post(() -> {
+                main.removeCallbacks(readinessRetry);
+                if (delay >= 0 && version == configVersion && prefs.getBoolean("automatic", false)
+                        && (lastStatus == null || !"firmware_repair_blocked".equals(lastStatus.state)))
+                    main.postDelayed(readinessRetry, delay);
+            });
         } finally {
+            final boolean resumeOff = cancelAutomaticWork;
+            cancelAutomaticWork = false;
             busy.set(false);
-            main.post(this::updateHeartbeat);
+            main.post(() -> {
+                if (resumeOff) wakeHeartbeat();
+                else updateHeartbeat();
+            });
         }
     }
 
@@ -589,6 +686,23 @@ public final class McfgCoordinatorService extends Service {
 
     private void publish(McfgStatus status) {
         lastStatus = status;
+        main.post(() -> {
+            if (status.enabled && prefs.getBoolean("automatic", false)
+                    && CoordinatorState.isRestartPending(status.state) && status.restartAttempted) {
+                if (!status.transactionToken.equals(recoveryToken)) {
+                    main.removeCallbacks(recoveryTimeout);
+                    recoveryToken = status.transactionToken;
+                    main.postDelayed(recoveryTimeout, 120_000);
+                }
+            } else {
+                main.removeCallbacks(recoveryTimeout);
+                recoveryToken = "";
+            }
+            // Continue the already-started flow, without reconciling idle
+            // committed journals on heartbeat/status ticks.
+            if (CoordinatorState.isRestartPending(status.state) && !status.restartAttempted
+                    && contextSafe) wakeHeartbeat();
+        });
         String text = status.state + (status.profileId.isEmpty() ? "" : " — " + status.profileId);
         if ("baseline_restart_pending".equals(status.state))
             text += "\n" + getString(R.string.baseline_restart);
@@ -617,9 +731,10 @@ public final class McfgCoordinatorService extends Service {
     }
 
     private final class SlotCallback extends TelephonyCallback
-            implements TelephonyCallback.RadioPowerStateListener {
+            implements TelephonyCallback.RadioPowerStateListener, TelephonyCallback.CallStateListener {
         final TelephonyManager manager;
         boolean radioOn;
+        int callState = -1;
 
         SlotCallback(TelephonyManager manager) {
             this.manager = manager;
@@ -627,6 +742,7 @@ public final class McfgCoordinatorService extends Service {
 
         @Override
         public void onRadioPowerStateChanged(int state) {
+            if (!callbacks.containsValue(this)) return;
             radioOn = state == TelephonyManager.RADIO_POWER_ON;
             if (!radioOn) {
                 noticeReady = false;
@@ -638,7 +754,18 @@ public final class McfgCoordinatorService extends Service {
             if (CoordinatorState.observeRadio(radioOn, prefs.getString("restart_token", ""),
                     prefs.getBoolean("restart_saw_down", false)))
                 prefs.edit().putBoolean("restart_saw_down", true).commit();
-            tick();
+            readinessEvent();
+        }
+
+        @Override
+        public void onCallStateChanged(int state) {
+            if (!callbacks.containsValue(this)) return;
+            callState = state;
+            if (state != TelephonyManager.CALL_STATE_IDLE) {
+                contextSafe = false;
+                sendContext();
+            }
+            wakeHeartbeat();
         }
     }
 }

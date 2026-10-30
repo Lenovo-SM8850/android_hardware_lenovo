@@ -7,6 +7,7 @@ cc_library_static {
         "ProfileStore.cpp",
         "MbnParser.cpp",
         "Transaction.cpp",
+        "FirmwareGeneration.cpp",
         "Recovery.cpp",
         "EfsClient.cpp",
         "DiagTransport.cpp",
@@ -68,5 +69,35 @@ cc_binary {
         "-Werror",
         "-fexceptions",
     ],
+    cpp_std: "c++17",
+}
+
+cc_test_host {
+    name: "lenovo_mcfg_test",
+    srcs: ["tests/host_test.cpp"],
+    static_libs: ["liblenovo_mcfg_core"],
+    shared_libs: ["libjsoncpp", "libcrypto", "libz"],
+    host_ldlibs: ["-ldl", "-lpthread"],
+    cflags: ["-Wall", "-Wextra", "-Werror", "-fexceptions"],
+    cpp_std: "c++17",
+    gtest: false,
+}
+
+cc_library_host_shared {
+    name: "liblenovo_mcfg_fake_diag",
+    stem: "libdiag",
+    srcs: ["tests/host_test.cpp"],
+    cflags: ["-Wall", "-Wextra", "-Werror", "-DMCFG_FAKE_DIAG"],
+    cpp_std: "c++17",
+}
+
+// Installed only by explicit device acceptance tests, never by PRODUCT_PACKAGES.
+cc_binary {
+    name: "lenovo_mcfg_firmware_failure_test",
+    vendor: true,
+    srcs: ["tests/firmware_failure_test.cpp"],
+    static_libs: ["liblenovo_mcfg_core"],
+    shared_libs: ["libjsoncpp", "libcrypto", "libz", "libdl", "liblog"],
+    cflags: ["-Wall", "-Wextra", "-Werror", "-fexceptions"],
     cpp_std: "c++17",
 }

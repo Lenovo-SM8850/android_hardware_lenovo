@@ -23,7 +23,8 @@ TransactionLock::~TransactionLock() {
 Transaction::Transaction(ProfileStore& store, EfsTransport& efs, std::string directory,
                          std::function<std::string()> modemVersion,
                          std::function<bool()> safe,
-                         std::shared_ptr<TransactionLock> lock, std::function<int64_t()> clock)
+                         std::shared_ptr<TransactionLock> lock, std::function<int64_t()> clock,
+                         std::function<std::string()> firmware)
     : store_(store),
       efs_(efs),
       path_(directory + "/journal.json"),
@@ -33,6 +34,7 @@ Transaction::Transaction(ProfileStore& store, EfsTransport& efs, std::string dir
           return std::chrono::duration_cast<std::chrono::milliseconds>(
                   std::chrono::steady_clock::now().time_since_epoch()).count();
       }),
+      firmware_(std::move(firmware)),
       lock_(lock ? std::move(lock) : std::make_shared<TransactionLock>(directory)) {
     require(lock_->directory() == directory, "transaction lock directory");
     try {
@@ -49,6 +51,14 @@ Transaction::Transaction(ProfileStore& store, EfsTransport& efs, std::string dir
             status_.token = journal_["token"].asString();
             status_.sourceName = journal_["source_name"].asString();
             status_.sourceSha256 = journal_["source_sha256"].asString();
+            status_.appliedFirmware = journal_["applied_firmware"].asString();
+            targetFirmware_ = journal_["target_firmware"].asString();
+            targetProfile_ = journal_["target_profile"].asString();
+            targetSha256_ = journal_["target_sha256"].asString();
+            repairKey_ = journal_["repair_attempt_key"].asString();
+            repairOutcome_ = journal_["repair_attempt_outcome"].asString();
+            if (journal_["repair_attempts"].isObject())
+                repairAttempts_ = journal_["repair_attempts"];
             status_.enabled = journal_["enabled"].asBool();
             // Legacy journals with prior use have already passed their first enable.
             baselineReset_ = journal_.isMember("baselineReset")
@@ -91,6 +101,7 @@ Transaction::Transaction(ProfileStore& store, EfsTransport& efs, std::string dir
                                                "committed",
                                                "rolling_back",
                                                "error",
+                                               "firmware_repair_blocked",
                                                "probe_readonly"};
             require(states.count(status_.state), "journal state");
             // Legacy EFS snapshots are intentionally discarded without decoding.
@@ -129,6 +140,13 @@ void Transaction::save() {
     journal_["baseband"] = status_.modemVersion;
     journal_["source_name"] = status_.sourceName;
     journal_["source_sha256"] = status_.sourceSha256;
+    journal_["applied_firmware"] = status_.appliedFirmware;
+    journal_["target_firmware"] = targetFirmware_;
+    journal_["target_profile"] = targetProfile_;
+    journal_["target_sha256"] = targetSha256_;
+    journal_["repair_attempt_key"] = repairKey_;
+    journal_["repair_attempt_outcome"] = repairOutcome_;
+    journal_["repair_attempts"] = repairAttempts_;
     journal_["token"] = status_.token;
     journal_["enabled"] = status_.enabled;
     journal_["baselineReset"] = baselineReset_;
@@ -144,8 +162,15 @@ void Transaction::fail(const char* error) {
     status_.error = error;
     status_.token.clear();
     status_.restartAttempted = false;
-    setState("error");
+    if (!repairKey_.empty() && repairOutcome_ == "in_progress") {
+        repairOutcome_ = "failed";
+        repairAttempts_[repairKey_] = repairOutcome_;
+        setState("firmware_repair_blocked");
+    } else setState("error");
     save();
+}
+void Transaction::restartFailed(const char* error) {
+    if (pending() && status_.restartAttempted && repairOutcome_ == "in_progress") fail(error);
 }
 void Transaction::gate(bool checkSafety) {
     require(!checkSafety || safe_(), "call/emergency/radio/identity context unsafe or expired");
@@ -188,7 +213,11 @@ void Transaction::verify(const Snapshot& wanted, const char* step) {
     }
 }
 void Transaction::mutate(const Snapshot& wanted) {
-    const auto checkpoint = [&] { gate(); };
+    const auto checkpoint = [&] {
+        gate();
+        if (firmware_ && status_.enabled && !targetProfile_.empty())
+            require(targetFirmware_ == firmware_(), "modem build changed during write");
+    };
     const auto write = [&](const std::string& path, const std::optional<Bytes>& bytes) {
         if (path == kControl) {
             autoselect_ = -1;
@@ -222,7 +251,7 @@ void Transaction::mutate(const Snapshot& wanted) {
     if (wanted.at(kControl) != std::optional<Bytes>(Bytes{0}))
         write(kControl, wanted.at(kControl));
 }
-void Transaction::enable(bool enabled) {
+void Transaction::enable(bool enabled, const std::vector<std::string>& homePlmns) {
     if (!enabled) {
         status_.enabled = false;
         if (!pending()) setState("disabled");
@@ -231,6 +260,15 @@ void Transaction::enable(bool enabled) {
     }
     status_.enabled = true;
     if (!pending()) {
+        // setEnabled(true) is the explicit configuration request, not reconnect.
+        // A user Apply renews the attempt budget for the currently blocked key.
+        if (!homePlmns.empty()) {
+            const auto selection = store_.select(homePlmns);
+            if (selection.state == "checking") repairAttempts_.removeMember(repairKey(selection.profile));
+        } else if (!repairKey_.empty() && repairOutcome_ == "failed")
+            repairAttempts_.removeMember(repairKey_);
+        repairKey_.clear();
+        repairOutcome_.clear();
         setState("waiting_for_identity");
         status_.error.clear();
     }
@@ -238,7 +276,8 @@ void Transaction::enable(bool enabled) {
 }
 void Transaction::evaluate(const std::vector<std::string>& homePlmns) {
     if (homePlmns.empty()) return;  // Temporary SIM removal preserves the applied state.
-    if (status_.state == "restart_pending" && status_.enabled && !status_.profile.empty()) {
+    if (status_.state == "restart_pending" && status_.enabled && !status_.profile.empty() &&
+        repairOutcome_ != "in_progress") {
         const auto next = store_.select(homePlmns);
         if (next.state == "checking" && next.profile != status_.profile) {
             gate();
@@ -255,6 +294,10 @@ void Transaction::evaluate(const std::vector<std::string>& homePlmns) {
         return;
     }
     auto selection = store_.select(homePlmns);
+    if (selection.state == "checking" && firmwareRepairBlocked(selection.profile)) {
+        setState("firmware_repair_blocked");
+        return;
+    }
     // Binder apply evaluates first; retain the durable proof for its no-op guard.
     if (selection.state == "checking" && committedSourceMatches(selection.profile)) return;
     setState(selection.state);
@@ -264,9 +307,36 @@ bool Transaction::committedSourceMatches(const std::string& profile) const {
     if (!status_.enabled || pending() || status_.state != "committed" ||
         profile.empty() || status_.profile != profile || status_.sourceName.empty() ||
         status_.sourceSha256.empty()) return false;
+    if (firmware_ && (firmware_().empty() || status_.appliedFirmware != firmware_())) return false;
     const auto metadata = store_.metadata(profile);
     return status_.sourceName == metadata["source_name"].asString() &&
            status_.sourceSha256 == metadata["source_sha256"].asString();
+}
+std::string Transaction::repairKey(const std::string& profile) const {
+    if (!firmware_ || profile.empty()) return "";
+    const auto generation = firmware_();
+    if (generation.empty()) return "";
+    const auto source = store_.metadata(profile)["source_sha256"].asString();
+    if (keyGeneration_ == generation && keyProfile_ == profile && keySha256_ == source)
+        return cachedRepairKey_;
+    Json::Value key(Json::arrayValue);
+    key.append(generation);
+    key.append(profile);
+    key.append(source);
+    keyGeneration_ = generation;
+    keyProfile_ = profile;
+    keySha256_ = source;
+    cachedRepairKey_ = sha256(jsonBytes(key));
+    return cachedRepairKey_;
+}
+bool Transaction::firmwareRepairBlocked(const std::string& profile) const {
+    if (!status_.enabled || pending()) return false;
+    const auto key = repairKey(profile);
+    // The same durable attempt spans the initial 07 restart and its overlay.
+    if (key == repairKey_ && repairOutcome_ == "in_progress" && status_.profile.empty() &&
+        status_.nextProfile == targetProfile_ && baselineReset_) return false;
+    return !key.empty() && repairAttempts_.isMember(key) &&
+            repairAttempts_[key].asString() != "complete";
 }
 void Transaction::execute(const Snapshot& wanted, const std::string& profile,
                           const std::string& token, const std::string& nextProfile, bool baseline) {
@@ -274,6 +344,14 @@ void Transaction::execute(const Snapshot& wanted, const std::string& profile,
             "transaction token");
     try {
         gate();
+        if (firmware_ && status_.enabled && !targetProfile_.empty()) {
+            require(!targetFirmware_.empty(), "modem build ID unavailable; deferred");
+            require(targetFirmware_ == firmware_(), "modem build changed; deferred");
+            // A fresh read establishes DIAG HELLO readiness before consuming a
+            // firmware attempt. Never rely on the cached autoselect status here.
+            efs_.read(kControl);
+            gate();
+        }
         status_.error.clear();
         status_.nextProfile = nextProfile;
         status_.step = baseline ? "baseline" : (profile.empty() ? "restore" : "overlay");
@@ -285,6 +363,19 @@ void Transaction::execute(const Snapshot& wanted, const std::string& profile,
         setState("staged");
         save();
         setState("applying");
+        if (firmware_ && status_.enabled && !targetProfile_.empty()) {
+            const auto key = repairKey(targetProfile_);
+            require(!key.empty(), "firmware repair key unavailable");
+            require(!repairAttempts_.isMember(key) ||
+                            (key == repairKey_ && repairOutcome_ == "in_progress") ||
+                            repairAttempts_[key].asString() == "complete",
+                    "firmware repair already attempted");
+            repairKey_ = key;
+            repairOutcome_ = "in_progress";
+            repairAttempts_[key] = repairOutcome_;
+            MCFG_INFO("Firmware repair reserved generation=%s profile=%s",
+                      targetFirmware_.c_str(), targetProfile_.c_str());
+        }
         save();
         mutate(wanted);
         status_.profile = profile;
@@ -311,6 +402,16 @@ void Transaction::apply(const std::vector<std::string>& homePlmns, const std::st
                       selection.profile.c_str());
             return;
         }
+        if (firmwareRepairBlocked(selection.profile)) {
+            setState("firmware_repair_blocked");
+            return;
+        }
+        if (firmware_) {
+            targetFirmware_ = firmware_();
+            require(!targetFirmware_.empty(), "modem build ID unavailable; deferred");
+            targetProfile_ = selection.profile;
+            targetSha256_ = store_.metadata(selection.profile)["source_sha256"].asString();
+        }
         status_.modemVersion = modemVersion_();  // Diagnostics only, never an approval gate.
         gate();
         if (!baselineReset_) {
@@ -324,8 +425,13 @@ void Transaction::apply(const std::vector<std::string>& homePlmns, const std::st
             if (status_.profile.empty()) status_.nextProfile = selection.profile;
             save();
         }
-        if ((store_.metadata(selection.profile)["imported"].asBool() &&
-                    status_.nextProfile != selection.profile) ||
+        const auto metadata = store_.metadata(selection.profile);
+        const bool sameSourceRepair = firmware_ && status_.appliedFirmware != targetFirmware_ &&
+                status_.profile == selection.profile &&
+                status_.sourceName == metadata["source_name"].asString() &&
+                status_.sourceSha256 == metadata["source_sha256"].asString();
+        if ((metadata["imported"].asBool() &&
+                    status_.nextProfile != selection.profile && !sameSourceRepair) ||
             (!status_.profile.empty() && status_.profile != selection.profile) ||
             (status_.step == "restore" && !status_.nextProfile.empty())) {
             MCFG_INFO("Restoring automatic selection before carrier profile change");
@@ -339,7 +445,8 @@ void Transaction::apply(const std::vector<std::string>& homePlmns, const std::st
         wanted[kControl] = Bytes{0};
         execute(wanted, selection.profile, token);
     } catch (const std::exception& error) {
-        if (status_.state != "error" && !pending()) fail(error.what());
+        if (status_.state != "error" && status_.state != "firmware_repair_blocked" && !pending())
+            fail(error.what());
         throw;
     }
 }
@@ -353,7 +460,15 @@ void Transaction::restore(const std::string& token) {
             save();
         }
         require(!pending(), "restore unavailable");
-        status_.enabled = false;
+        // Explicit OFF has already disabled the journal. An automatic unsupported-
+        // carrier restore keeps ON, so later SIM events cannot renew a failed budget.
+        status_.enabled = firmware_ && status_.enabled;
+        if (repairOutcome_ == "in_progress") repairAttempts_[repairKey_] = "failed";
+        repairKey_.clear();
+        repairOutcome_.clear();
+        targetFirmware_.clear();
+        targetProfile_.clear();
+        targetSha256_.clear();
         execute(Snapshot{{kControl, Bytes{7}}}, "", token);
     } catch (const std::exception& error) {
         if (status_.state != "error" && !pending()) fail(error.what());
@@ -366,6 +481,11 @@ bool Transaction::claimRestart(const std::string& token) {
                     token == status_.token,
             "restart token/state");
     gate();
+    if (firmware_ && status_.enabled && !targetFirmware_.empty() &&
+        targetFirmware_ != firmware_()) {
+        fail("modem build changed before restart");
+        throw std::runtime_error("modem build changed before restart");
+    }
     if (status_.restartAttempted) return false;
     // Durable at-most-once mark BEFORE the loader requests the vendor restart helper.
     status_.restartAttempted = true;
@@ -391,6 +511,18 @@ void Transaction::complete(const std::string& token) {
             "completion token/state");
     gate();
     try {
+        if (firmware_ && !status_.profile.empty()) {
+            const auto metadata = store_.metadata(status_.profile);
+            // Legacy pending work may finish, but cannot attest a generation
+            // it never recorded. A subsequent event schedules its repair.
+            if (!targetFirmware_.empty()) {
+                require(targetFirmware_ == firmware_(), "modem build changed during transaction");
+                require(targetProfile_ == status_.profile &&
+                                targetSha256_ == status_.sourceSha256 &&
+                                targetSha256_ == metadata["source_sha256"].asString(),
+                        "profile source changed during transaction");
+            }
+        }
         if (store_.metadata(status_.profile)["imported"].asBool()) {
             // User-chosen imports also need readback after their final restart.
             // Reuse the same verifier and EFS transport, including fresh HELLO.
@@ -399,6 +531,14 @@ void Transaction::complete(const std::string& token) {
             verify(wanted);
         }
         if (status_.state == "baseline_restart_pending") baselineReset_ = true;
+        if (firmware_ && !status_.profile.empty() && !targetFirmware_.empty()) {
+            status_.appliedFirmware = targetFirmware_;
+            MCFG_INFO("Carrier profile committed for modem build=%s", targetFirmware_.c_str());
+            if (repairOutcome_ == "in_progress") {
+                repairOutcome_ = "complete";
+                repairAttempts_[repairKey_] = repairOutcome_;
+            }
+        }
         // Radio recovery completes the transaction. Do not re-read an overlay
         // from the bundled automatic MBN that Android may legitimately rewrite.
         status_.token.clear();
