@@ -131,7 +131,8 @@ final class CoordinatorState {
         // OFF immediately hides the previous overlay, including an old apply
         // error. Once the loader disables it, an error belongs to the restore.
         if (!automatic && loaderEnabled) return "default";
-        if ("error".equals(transactionState)) return "error";
+        if ("error".equals(transactionState) || "firmware_repair_blocked".equals(transactionState))
+            return "error";
         if (!automatic || !loaderEnabled) return "default";
         if ("baseline_restart_pending".equals(transactionState)) return "baseline";
         if (candidateProfileId.isEmpty()) return "waiting";
@@ -144,6 +145,7 @@ final class CoordinatorState {
             String transactionState, String profileId, String sourceName, String candidateProfileId) {
         // The committed journal takes precedence over the process-local SIM epoch.
         // The acknowledged configuration version is persisted by the coordinator.
+        if ("firmware_repair_blocked".equals(transactionState)) return false;
         return verifiedVersion != version
                 || !shouldRecordApplied(transactionState, profileId, sourceName)
                 || !candidateProfileId.equals(profileId);
@@ -184,11 +186,21 @@ final class CoordinatorState {
         return now >= retryAt;
     }
 
+    synchronized long retryDelay(long now) {
+        return failures > 0 && failures <= RETRY_DELAYS.length ? Math.max(0, retryAt - now) : -1;
+    }
+
     synchronized void attemptFailed(long attemptedEpoch, long version, long now) {
+        attemptFailed(attemptedEpoch, version, now, false);
+    }
+
+    synchronized void attemptFailed(long attemptedEpoch, long version, long now, boolean automatic) {
         // Ignore a failure from work superseded by a SIM change.
         if (attemptedEpoch != epoch) return;
         retryAllowed(attemptedEpoch, version, now);
-        retryAt = now + RETRY_DELAYS[Math.min(failures, RETRY_DELAYS.length - 1)];
-        if (failures < RETRY_DELAYS.length) ++failures;
+        // OFF restoration retains its existing clock even after ON exhausts its timers.
+        retryAt = automatic && failures >= RETRY_DELAYS.length ? now
+                : now + RETRY_DELAYS[Math.min(failures, RETRY_DELAYS.length - 1)];
+        if (failures <= RETRY_DELAYS.length) ++failures;
     }
 }
