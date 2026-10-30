@@ -18,6 +18,7 @@
 #include "Recovery.h"
 #include "EfsDiagnostics.h"
 #include "Log.h"
+#include "FirmwareGeneration.h"
 
 namespace {
 using namespace mcfg;
@@ -48,10 +49,10 @@ class JournalOnlyEfs final : public EfsTransport {
 class Loader final : public ipc::BnMcfgLoader {
   public:
     Loader() : lock_(std::make_shared<TransactionLock>(kData)), store_(kRoot, kData) {
-        JournalOnlyEfs efs;
-        Transaction journal(store_, efs, kData, [] { return ""; },
-                            [] { return false; }, lock_);
-        initialStatus_ = journal.status();
+        initialTransaction_ = std::make_unique<Transaction>(
+                store_, journalEfs_, kData, [] { return ""; }, [] { return false; }, lock_,
+                std::function<int64_t()>{}, [&] { return firmware_.get(); });
+        initialStatus_ = initialTransaction_->status();
     }
     ndk::ScopedAStatus getStatus(ipc::McfgStatus* out) override {
         return run("getStatus", [&] { *out = status(); });
@@ -107,7 +108,12 @@ class Loader final : public ipc::BnMcfgLoader {
     ndk::ScopedAStatus setEnabled(bool enabled, ipc::McfgStatus* out) override {
         if (!authorized()) return denied("setEnabled");
         return run("setEnabled", [&] {
-            transaction().enable(enabled);
+            std::vector<std::string> home;
+            {
+                std::lock_guard lock(contextMutex_);
+                home = home_;
+            }
+            transaction().enable(enabled, home);
             *out = status();
             notify(*out);
         });
@@ -143,9 +149,10 @@ class Loader final : public ipc::BnMcfgLoader {
             // The frozen V1 claim also requests init's restricted oneshot helper.
             if (*out) {
                 diag_->invalidate();
-                require(android::base::SetProperty("vendor.lenovo.mcfg.restart", "0") &&
-                                android::base::SetProperty("vendor.lenovo.mcfg.restart", "1"),
-                        "vendor modem restart request failed");
+                const bool requested = android::base::SetProperty("vendor.lenovo.mcfg.restart", "0") &&
+                                android::base::SetProperty("vendor.lenovo.mcfg.restart", "1");
+                if (!requested) transaction().restartFailed("vendor modem restart request failed");
+                require(requested, "vendor modem restart request failed");
             }
             notify(status());
         });
@@ -157,6 +164,9 @@ class Loader final : public ipc::BnMcfgLoader {
                 applyingEpoch_ = epoch_.load();
             }
             transaction().recover();
+            // The coordinator calls recover for a claimed restart only after
+            // its bounded recovery wait expires without a down/up witness.
+            transaction().restartFailed("modem recovery not observed; explicit Apply required");
             *out = status();
             notify(*out);
         });
@@ -261,7 +271,8 @@ class Loader final : public ipc::BnMcfgLoader {
             efs_ = std::make_unique<EfsClient>(*diag_, store_.paths(), false);
             transaction_ = std::make_unique<Transaction>(
                     store_, *efs_, kData, [&] { return baseband(); },
-                    [&] { return safe(); }, lock_);
+                    [&] { return safe(); }, lock_, std::function<int64_t()>{},
+                    [&] { return firmware_.get(); });
         }
         return *transaction_;
     }
@@ -270,6 +281,9 @@ class Loader final : public ipc::BnMcfgLoader {
         const auto& s = transaction_ ? transaction_->status() : initialStatus_;
         out.state = s.state;
         out.profileId = s.profile;
+        // OFF does not read firmware metadata. Status only projects the cached
+        // generation; no journal transition or transaction starts here.
+        const std::string generation = s.enabled ? firmware_.get() : "";
         out.firmwareGeneration = baseband();
         out.transactionToken = s.token;
         out.sourceName = s.sourceName;
@@ -299,6 +313,19 @@ class Loader final : public ipc::BnMcfgLoader {
         }
         auto selection = store_.select(home);
         out.candidateProfileId = selection.profile;
+        if (out.enabled && out.transactionToken.empty() && selection.state == "checking") {
+            // The journal-only view also retains the durable failed-key gate.
+            // Constructing EfsClient performs HELLO, which must stay inside the
+            // lease-guarded status probe above or an actual transaction call.
+            auto& journal = transaction_ ? *transaction_ : *initialTransaction_;
+            if (journal.firmwareRepairBlocked(selection.profile))
+                out.state = "firmware_repair_blocked";
+            else if (out.state == "firmware_repair_blocked")
+                out.state = "checking";  // A different generation/source has its own budget.
+            else if (out.state == "committed" &&
+                    (generation.empty() || s.appliedFirmware != generation))
+                out.state = "checking";
+        }
         // Enabling resets the transaction to waiting_for_identity. A loaded SIM
         // can already select a profile while the coordinator waits for safety;
         // reporting the transaction's old gate incorrectly suggests no SIM.
@@ -346,7 +373,10 @@ class Loader final : public ipc::BnMcfgLoader {
     }
     std::shared_ptr<TransactionLock> lock_;
     ProfileStore store_;
+    JournalOnlyEfs journalEfs_;
+    std::unique_ptr<Transaction> initialTransaction_;
     Status initialStatus_;
+    FirmwareGeneration firmware_;
     std::unique_ptr<DiagTransport> diag_;
     std::unique_ptr<EfsClient> efs_;
     std::unique_ptr<Transaction> transaction_;

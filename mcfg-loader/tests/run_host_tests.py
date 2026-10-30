@@ -36,7 +36,7 @@ with tempfile.TemporaryDirectory(prefix="mcfg-test-", dir=args.scratch) as direc
                "-fsanitize=address,undefined", "-fno-omit-frame-pointer", "-I" + str(core),
                "-I" + str(jsoncpp / "include"), str(core / "ProfileStore.cpp"),
                str(core / "MbnParser.cpp"),
-               str(core / "Transaction.cpp"), str(core / "Recovery.cpp"), str(core / "EfsClient.cpp"),
+               str(core / "Transaction.cpp"), str(core / "FirmwareGeneration.cpp"), str(core / "Recovery.cpp"), str(core / "EfsClient.cpp"),
                str(core / "DiagTransport.cpp"), str(core / "tests/host_test.cpp"),
                *map(str, sorted((jsoncpp / "src/lib_json").glob("*.cpp"))),
                "-lcrypto", "-lz", "-ldl", "-pthread", "-o", str(binary)]
