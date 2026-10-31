@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "Policy.h"
+#include "Tests.h"
 #include "Threads.h"
 #include <tinyxml2.h>
 #include <algorithm>
@@ -45,7 +46,7 @@ void real(const char* stock, const char* overlay) {
     size_t sceneRows = 0, metadata = 0;
     for (const auto& [pkg, list] : policy.sceneLists) metadata += list.size();
     for (const auto& [pkg, modes] : policy.games) for (const auto& [name, mode] : modes) {
-        sceneRows += mode.scenes.size();
+        sceneRows += name == "chaoshen" ? 0 : mode.scenes.size(); // The maximum mode is a tuning base only.
         require(mode.scenes.size() == modes.at("Balance").scenes.size(), "Profile scene inheritance lost");
         for (const auto& [id, scene] : mode.scenes) {
             require(scene.timeMs > 0 && id >= 0 && id <= 100000, "Invalid real scene row");
@@ -71,6 +72,7 @@ void real(const char* stock, const char* overlay) {
     size_t hints = 0, bound = 0, rt = 0, delays = 0, fps = 0;
     std::map<int, size_t> accepted, dropped;
     for (const auto& [pkg, modes] : policy.games) for (const auto& [name, mode] : modes) {
+        if (name == "chaoshen") continue;
         hints += mode.perfHints.size(); bound += mode.bindCore.size(); rt += mode.schedulers.size();
         delays += mode.delayMs > 0;
         fps += Policy::fpsEnabled(mode, pkg);
@@ -84,7 +86,7 @@ void real(const char* stock, const char* overlay) {
     }
     for (const auto& diagnostic : policy.diagnostics) {
         auto pos = diagnostic.find("/PerfHint 0x");
-        if (pos != std::string::npos) ++dropped[std::stoi(diagnostic.substr(pos + 10), nullptr, 16)];
+        if (pos != std::string::npos && diagnostic.find("/chaoshen/") == std::string::npos) ++dropped[std::stoi(diagnostic.substr(pos + 10), nullptr, 16)];
     }
     require(hints > 100 && bound > 200 && rt >= 6 && delays >= 3, "Missing phase 2 real coverage");
     if (policy.version == "20260907")
@@ -107,6 +109,7 @@ void real(const char* stock, const char* overlay) {
         std::cout << "PERF_DROP opcode=0x" << std::hex << opcode << std::dec << " count=" << count << '\n';
     int clamped = 0;
     for (const auto& [pkg, definitions] : unresolved.games) for (const auto& [name, mode] : definitions) {
+        if (name == "chaoshen") continue;
         for (size_t i = 0; i < mode.bands.size(); ++i) for (int r = 0; r < 3; ++r) {
             const auto& before = mode.bands[i].bounds[r];
             const int last = actual[r].size() - 1;
@@ -810,6 +813,7 @@ int main(int argc, char** argv) {
         threadRecovery(argv[5]);
         recurringCost(argv[5]);
         jankFeedback(argv[5]);
+        tuningTests(argv[1], argv[2], argv[3], argv[4], argv[5]);
         return 0;
     } catch (const std::exception& e) { std::cerr << "FAIL " << e.what() << '\n'; return 1; }
 }

@@ -48,6 +48,8 @@ Band frequencies(const tinyxml2::XMLElement* parent, double temperature = 0) {
 bool supported(const std::string& mode) {
     return mode == "Balance" || mode == "Savage" || mode == "PowerSave";
 }
+// The stock maximum-performance mode is named differently on some firmware; both are stored as chaoshen.
+bool parsed(const std::string& name) { return supported(name) || name == "chaoshen" || name == "Godlike"; }
 bool allowedCase(int code) { return code == 0 || code == 100 || code == 200 || code == 300 || code == 400; }
 // These resources map to carried cgroup and KGSL nodes on both targets.
 constexpr int kUclamp = 0x40CAC000;
@@ -167,6 +169,7 @@ bool Policy::load(const std::string& stock, const std::string& overrides, std::s
         overlay.sensor = attr(safety, "sensor");
         overlay.hysteresis = std::stod(attr(safety, "hysteresisC"));
         overlay.sampleMs = integer(attr(safety, "sampleMs"));
+        if (safety->Attribute("skinTarget")) overlay.skinTargetMilliC = integer(attr(safety, "skinTarget"));
         if (!std::isfinite(overlay.hysteresis) || overlay.hysteresis < 0 || overlay.hysteresis > 5 ||
             overlay.sampleMs < 100 || overlay.sampleMs > 1000 || overlay.sensor.empty())
             throw std::runtime_error("Invalid safety settings");
@@ -222,8 +225,12 @@ bool Policy::load(const std::string& stock, const std::string& overrides, std::s
             auto sensor = game->FirstChildElement("ThermalTempType");
             if (sensor && integer(value(sensor)) != 11) throw std::runtime_error("Unsupported sensor type");
             for (auto m = game->FirstChildElement("Mode"); m; m = m->NextSiblingElement("Mode")) {
-                const auto name = attr(m, "name");
-                if (!supported(name)) continue; // Later phases own combined modes and other controls.
+                const auto stockName = attr(m, "name");
+                if (!parsed(stockName)) continue; // Later phases own combined modes and other controls.
+                const std::string name = stockName == "Godlike" ? "chaoshen" : stockName;
+                const bool maximum = name == "chaoshen";
+                if (maximum && modes.count(name)) continue;
+                try {
                 auto ms = m->FirstChildElement("ThermalTempType");
                 if (ms && integer(value(ms)) != 11) throw std::runtime_error("Unsupported mode sensor");
                 Mode mode;
@@ -231,6 +238,7 @@ bool Policy::load(const std::string& stock, const std::string& overrides, std::s
                 mode.delayMs = defaults.delayMs;
                 const auto context = attr(game, "pkg") + "/" + name;
                 threadOptions(m, mode, diagnostics, context);
+                mode.skinTargetMilliC = overlay.skinTargetMilliC;
                 if (!mode.fpsAdjust) mode.fpsAdjust = defaults.fpsAdjust;
                 if (!mode.jankAdjust) mode.jankAdjust = defaults.jankAdjust;
                 if (mode.jankAdjustTime <= 0) mode.jankAdjustTime = defaults.jankAdjustTime;
@@ -274,18 +282,39 @@ bool Policy::load(const std::string& stock, const std::string& overrides, std::s
                     mode.bands.push_back(b);
                 }
                 modes.emplace(name, std::move(mode));
+                } catch (const std::exception& e) {
+                    // The maximum mode is only a tuning base; its errors never fail the policy.
+                    if (!maximum) throw;
+                    diagnostics.push_back(attr(game, "pkg") + "/chaoshen: " + e.what());
+                }
             }
             if (!modes.count("Balance")) throw std::runtime_error("Game missing Balance");
             std::istringstream packages(attr(game, "pkg"));
             std::string pkg;
+            Source source;
+            if (const char* label = game->Attribute("name")) source.name = label;
             while (std::getline(packages, pkg, ',')) {
                 const auto first = pkg.find_first_not_of(" \t\r\n");
                 if (first == std::string::npos) continue;
                 pkg = pkg.substr(first, pkg.find_last_not_of(" \t\r\n") - first + 1);
                 if (!games.emplace(pkg, modes).second) throw std::runtime_error("Duplicate package: " + pkg);
+                if (source.key.empty()) source.key = pkg;
+                source.packages.push_back(pkg);
+            }
+            if (!source.key.empty()) {
+                if (source.key == "default") source.name.clear();
+                sources.push_back(std::move(source));
             }
         }
         if (!games.count("default")) throw std::runtime_error("Missing default game");
+        for (const auto& [alias, target] : overlay.aliases) {
+            for (auto& source : sources) {
+                if (std::find(source.packages.begin(), source.packages.end(), target.profile) == source.packages.end()) continue;
+                if (std::find(source.packages.begin(), source.packages.end(), alias) == source.packages.end())
+                    source.packages.push_back(alias);
+                break;
+            }
+        }
         std::string aliasDiagnostics;
         aliasesValid(&aliasDiagnostics);
         if (!aliasDiagnostics.empty()) diagnostics.push_back(aliasDiagnostics);
@@ -309,9 +338,11 @@ bool Policy::aliasesValid(std::string* error) const {
     return valid;
 }
 
-void Policy::resolve(const Opps& actual, const std::array<int, 2>& coreCounts) {
+void Policy::resolve(const Opps& actual, const std::array<int, 2>& coreCounts, uint64_t present) {
     if (mResolved) return;
     mResolved = true;
+    mCores = coreCounts;
+    mPresent = present;
     Opps tables = actual;
     for (int r = 0; r < 3; ++r) {
         auto& table = tables[r];
@@ -320,6 +351,7 @@ void Policy::resolve(const Opps& actual, const std::array<int, 2>& coreCounts) {
         table.erase(std::unique(table.begin(), table.end()), table.end());
         if (r == 2) std::reverse(table.begin(), table.end());
     }
+    mTables = tables;
     for (auto& [pkg, modes] : games) for (auto& [name, mode] : modes) {
         auto& hints = mode.perfHints;
         const auto context = pkg + "/" + name;
@@ -371,7 +403,7 @@ void Policy::resolve(const Opps& actual, const std::array<int, 2>& coreCounts) {
                 const auto& table = tables[r];
                 if (table.empty()) {
                     diagnostics.push_back(pkg + "/" + name + "/" + kNames[r] + ": Missing OPP table");
-                    bound = {}; continue;
+                    bound = {}; b.units[r] = {}; continue;
                 }
                 const int last = static_cast<int>(declared.size()) - 1;
                 const Bounds original = bound;
@@ -395,8 +427,9 @@ void Policy::resolve(const Opps& actual, const std::array<int, 2>& coreCounts) {
                 int floor = bound.floor < 0 ? -1 : roundDown(std::min(declared[bound.floor], ceiling));
                 if (ceiling < 0 || (bound.floor >= 0 && floor < 0)) {
                     diagnostics.push_back(pkg + "/" + name + "/" + kNames[r] + ": No safe OPP");
-                    bound = {}; continue;
+                    bound = {}; b.units[r] = {}; continue;
                 }
+                b.units[r] = {floor, ceiling};
                 if (r == 2) {
                     bound.floor = floor < 0 ? -1 : std::find(table.begin(), table.end(), floor) - table.begin();
                     bound.ceiling = std::find(table.begin(), table.end(), ceiling) - table.begin();
@@ -426,10 +459,31 @@ Selection Policy::select(const std::string& pkg, int mode) const {
     return {&selected->second, profile, threads};
 }
 
-size_t Policy::band(const Mode& mode, double temperature, int previous, double hysteresis) {
+std::vector<int> Policy::ladder(int r) const {
+    std::vector<int> result;
+    for (int f : mTables[r]) if (f <= overlay.ceilings[r]) result.push_back(f);
+    if (r == 2) std::reverse(result.begin(), result.end());
+    return result;
+}
+
+int Policy::positiveCount(const Mode& mode) {
+    return std::count_if(mode.bands.begin(), mode.bands.end(), [](const Band& band) { return band.temperature > 0; });
+}
+
+size_t Policy::linearBand(const Mode& mode, double temperature, int previous, double hysteresis) {
     if (mode.bands.empty()) return 0;
-    size_t positive = std::count_if(mode.bands.begin(), mode.bands.end(),
-                                  [](const Band& band) { return band.temperature > 0; });
+    size_t selected = 0;
+    for (size_t i = 1; i < mode.bands.size(); ++i) if (temperature >= mode.bands[i].temperature) selected = i;
+    const size_t prior = previous >= 0 && static_cast<size_t>(previous) < mode.bands.size() ? previous : 0;
+    if (prior == selected + 1 && temperature >= mode.bands[prior].temperature - hysteresis) return prior;
+    return selected;
+}
+
+size_t Policy::band(const Mode& mode, double temperature, int previous, double hysteresis) {
+    if (mode.hysteresisDeciC >= 0) hysteresis = mode.hysteresisDeciC / 10.0;
+    if (mode.linearBands) return linearBand(mode, temperature, previous, hysteresis);
+    if (mode.bands.empty()) return 0;
+    const size_t positive = positiveCount(mode);
     const size_t prior = previous >= 0 && static_cast<size_t>(previous) < mode.bands.size() ? previous : 0;
     // Match the positive-count branches and adjacent-level cooling guard. The
     // thresholds remain in their original positions; a zero anchor is not removed.
@@ -510,7 +564,14 @@ void FpsController::reset(int64_t now) {
     mStart = now; invalidate();
 }
 
-bool FpsController::sample(int64_t now, float fps, bool enabled, int boostMs) {
+bool validDropWindow(int lower, int upper) {
+    return lower >= 100 && lower <= 985 && upper >= 110 && upper <= 995 && lower % 5 == 0 && upper % 5 == 0 && upper - lower >= 10;
+}
+
+bool FpsController::sample(int64_t now, float fps, bool enabled, int boostMs, int /*sensitivity*/, int lowerPermille, int upperPermille) {
+    const bool chosen = validDropWindow(lowerPermille, upperPermille);
+    const double lower = chosen ? lowerPermille / 1000.0 : 0.60;
+    const double keep = chosen ? upperPermille / 1000.0 : 0.965;
     if (!enabled || boostMs <= 0 || now - mStart < 3000 || !std::isfinite(fps) || fps < 0) return false;
     const auto last = (mHead + mCount + mSamples.size() - 1) % mSamples.size();
     if (mCount && now - mSamples[last].time < 400) return false;
@@ -523,7 +584,7 @@ bool FpsController::sample(int64_t now, float fps, bool enabled, int boostMs) {
     const double mean = total / 5.0f;
     // Rejected low/outlier samples remain in the time window, as before.
     if (fps < 10 || previous - fps > previous * 0.8 || active(now) ||
-        fps <= 0.6 * mean || fps >= 0.965 * mean) return false;
+        fps <= lower * mean || fps >= keep * mean) return false;
     mBoostUntil = now + boostMs;
     return true;
 }
@@ -544,5 +605,16 @@ int coreCount(const std::string& relatedCpus) {
         if (cpu < 0 || cpu >= 64 || !cpus.insert(cpu).second) return 0;
     }
     return input.eof() ? static_cast<int>(cpus.size()) : 0;
+}
+
+uint64_t cpuMask(const std::string& relatedCpus) {
+    std::istringstream input(relatedCpus);
+    uint64_t mask = 0;
+    int cpu;
+    while (input >> cpu) {
+        if (cpu < 0 || cpu >= 64 || (mask >> cpu & 1)) return 0;
+        mask |= 1ULL << cpu;
+    }
+    return input.eof() ? mask : 0;
 }
 } // namespace gamepolicy
