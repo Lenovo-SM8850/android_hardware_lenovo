@@ -9,9 +9,11 @@
 #include <vector>
 
 namespace gamepolicy {
+bool validDropWindow(int lower, int upper);
 using Opps = std::array<std::vector<int>, 3>; // Gold/Prime kHz, GPU Hz (descending).
 struct Bounds { int floor = -1; int ceiling = -1; };
-struct Band { double temperature; std::array<Bounds, 3> bounds; };
+// bounds are request-encoded (CPU MHz, GPU table index); units hold the same row as kHz/Hz, -1 = none.
+struct Band { double temperature; std::array<Bounds, 3> bounds; std::array<Bounds, 3> units{}; };
 struct Scene { int timeMs; Band frequencies; };
 struct PerfHint { int opcode; int value; };
 struct BindCore { std::string name; uint64_t mask; };
@@ -29,7 +31,13 @@ struct Mode {
     std::vector<Band> boostedBands{};
     std::vector<Band> jankBands{};
     std::map<int, Scene> scenes{}; // Profile-level SceneOpt, inherited by every mode.
+    bool linearBands = false;      // Tuned modes: general step rule instead of the positive-count branches.
     int boostLengthMs = 0;
+    int dropLowerPermille = -1, dropUpperPermille = -1;
+    int dropSensitivity = -1;       // Legacy tuning field; the detector uses a fixed trigger.
+    int hysteresisDeciC = -1;      // -1 = overlay hysteresis.
+    int skinTargetMilliC = -1;
+    int powerTargetMw = -1;
 };
 struct Alias { std::string profile; bool threadPlacement = true; };
 struct Overlay {
@@ -39,8 +47,10 @@ struct Overlay {
     std::array<std::string, 3> oppPaths;
     std::string sensor;
     double hysteresis = 1;
+    int skinTargetMilliC = -1;
     int sampleMs = 1000;
 };
+struct Source { std::string key; std::string name; std::vector<std::string> packages; };
 struct Selection { const Mode* mode; std::string profile; bool threadPlacement; };
 struct Decision { int thermalCase = 0; int band = -1; std::vector<int> resources; };
 class Policy {
@@ -50,12 +60,20 @@ class Policy {
     std::map<std::string, std::vector<int>> sceneLists; // Metadata, never an admission filter.
     std::vector<std::string> diagnostics;
     std::string version;
+    std::vector<Source> sources;
     bool load(const std::string& stock, const std::string& overrides, std::string* error);
     // Resolve every index once, before any session can request a resource.
-    void resolve(const Opps& actual, const std::array<int, 2>& coreCounts = {});
+    void resolve(const Opps& actual, const std::array<int, 2>& coreCounts = {}, uint64_t present = 0);
     Selection select(const std::string& package, int mode) const;
     bool aliasesValid(std::string* error) const;
     static size_t band(const Mode& mode, double temperature, int previous, double hysteresis);
+    static size_t linearBand(const Mode& mode, double temperature, int previous, double hysteresis);
+    static int positiveCount(const Mode& mode);
+    const Opps& tables() const { return mTables; }
+    std::vector<int> ladder(int r) const; // Ascending runtime values at or below the hard ceiling.
+    int cores(int r) const { return mCores[r]; }
+    std::vector<int> declared(int r) const { return mDeclared[r]; }
+    uint64_t presentMask() const { return mPresent; }
     static std::vector<int> resources(const Band& band);
     static std::vector<int> resources(const Mode& mode, int band, bool boosted = false, bool jank = false);
     static bool fpsEnabled(const Mode& mode, const std::string& profile,
@@ -67,6 +85,9 @@ class Policy {
                              int64_t sampleAgeMs, int previous, double hysteresis);
   private:
     Opps mDeclared;
+    Opps mTables;
+    std::array<int, 2> mCores{};
+    uint64_t mPresent = 0;
     bool mResolved = false;
 };
 
@@ -106,7 +127,10 @@ class FpsController {
     void reset(int64_t now);
     void invalidate() { mCount = mHead = 0; cancel(); }
     void cancel() { mBoostUntil = 0; }
-    bool sample(int64_t now, float fps, bool enabled, int boostMs = 0);
+    bool sample(int64_t now, float fps, bool enabled, int boostMs = 0, int sensitivity = -1, int lowerPermille = -1, int upperPermille = -1);
+    bool sample(int64_t now, float fps, bool enabled, const Mode& mode) {
+        return sample(now, fps, enabled, mode.boostLengthMs, mode.dropSensitivity, mode.dropLowerPermille, mode.dropUpperPermille);
+    }
     bool active(int64_t now) const { return now < mBoostUntil; }
     int64_t deadline() const { return mBoostUntil; }
     std::array<float, 5> history() const;
@@ -150,4 +174,6 @@ class JankController {
 };
 // related_cpus is a whitespace-separated list, independent of online CPU state.
 int coreCount(const std::string& relatedCpus);
+// Bit mask of the CPUs in a related_cpus list; 0 when malformed.
+uint64_t cpuMask(const std::string& relatedCpus);
 } // namespace gamepolicy

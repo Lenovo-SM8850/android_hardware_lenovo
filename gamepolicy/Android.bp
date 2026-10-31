@@ -3,7 +3,7 @@ cc_library_static {
     name: "liblenovo_gamepolicy",
     vendor: true,
     host_supported: true,
-    srcs: ["Policy.cpp", "Threads.cpp"],
+    srcs: ["Policy.cpp", "Threads.cpp", "Tuning.cpp"],
     shared_libs: ["libtinyxml2"],
     export_include_dirs: ["."],
     cflags: ["-Wall", "-Wextra", "-Werror", "-fexceptions"],
@@ -28,7 +28,10 @@ cc_binary {
 
 cc_binary_host {
     name: "lenovo-gamepolicy-check",
-    srcs: ["tests/PolicyTest.cpp"],
+    srcs: [
+        "tests/PolicyTest.cpp",
+        "tests/TuningTest.cpp",
+    ],
     static_libs: ["liblenovo_gamepolicy"],
     shared_libs: ["libtinyxml2"],
     cflags: ["-Wall", "-Wextra", "-Werror", "-fexceptions"],
