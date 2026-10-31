@@ -3,3 +3,4 @@
 
 void tuningTests(const char* wujiXml, const char* wujiOverlay, const char* baldurXml, const char* baldurOverlay,
                  const char* tempDir);
+void analysisTests(const char* baldurXml, const char* baldurOverlay);
