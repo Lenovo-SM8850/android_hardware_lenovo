@@ -3,3 +3,9 @@ hal_attribute(game_policy)
 type hal_game_policy_service, service_manager_type, hal_service_type;
 hal_attribute_service(hal_game_policy, hal_game_policy_service)
 binder_call(hal_game_policy_client, hal_game_policy_server)
+hal_attribute(game_tuning)
+type hal_game_tuning_service, service_manager_type, hal_service_type;
+hal_attribute_service(hal_game_tuning, hal_game_tuning_service)
+binder_call(hal_game_tuning_client, hal_game_tuning_server)
+# The server calls back into its client for session notifications.
+binder_call(hal_game_tuning_server, hal_game_tuning_client)

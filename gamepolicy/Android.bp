@@ -17,7 +17,8 @@ cc_binary {
     srcs: ["service.cpp"],
     static_libs: ["liblenovo_gamepolicy"],
     shared_libs: [
-        "io.github.miner7222.gamepolicy-V1-ndk",
+        "io.github.miner7222.gamepolicy-V2-ndk",
+        "vendor.lenovo.hardware.gametuning-V2-ndk",
         "libbinder_ndk", "libbase", "liblog", "libdl", "libtinyxml2",
     ],
     init_rc: ["vendor.lenovo.game-policy.rc"],
