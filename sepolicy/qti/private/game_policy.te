@@ -1,3 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
 # The framework session authority is the only service client.
 hal_client_domain(system_server, hal_game_policy)
+# Game tuning is edited and its recordings are read by a system app.
+hal_client_domain(system_app, hal_game_tuning)
