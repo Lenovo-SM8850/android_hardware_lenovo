@@ -814,6 +814,7 @@ int main(int argc, char** argv) {
         recurringCost(argv[5]);
         jankFeedback(argv[5]);
         tuningTests(argv[1], argv[2], argv[3], argv[4], argv[5]);
+        recorderTests(argv[5]);
         analysisTests(argv[3], argv[4]);
         return 0;
     } catch (const std::exception& e) { std::cerr << "FAIL " << e.what() << '\n'; return 1; }
