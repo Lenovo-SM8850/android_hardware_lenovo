@@ -2,7 +2,7 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 <resources>
     <string name="app_name">Video motion smoothing</string>
-    <string name="settings_summary">Smooth video playback</string>
+    <string name="settings_summary">Makes motion in supported videos smoother.</string>
     <string name="enabled">Use video motion smoothing</string>
     <string name="limits">Restart playback after changes. Copy-protected, HDR and some TV streams aren\'t supported.</string>
     <string name="user_limit">Available only to the admin user.</string>
