@@ -50,7 +50,6 @@ bool supported(const std::string& mode) {
 }
 // The stock maximum-performance mode is named differently on some firmware; both are stored as chaoshen.
 bool parsed(const std::string& name) { return supported(name) || name == "chaoshen" || name == "Godlike"; }
-bool allowedCase(int code) { return code == 0 || code == 100 || code == 200 || code == 300 || code == 400; }
 // These resources map to carried cgroup and KGSL nodes on both targets.
 constexpr int kUclamp = 0x40CAC000;
 constexpr int kGpuDefault = 0x42800000;
@@ -135,6 +134,8 @@ uint64_t Policy::mask(const std::string& text) {
     if (!bits) throw std::runtime_error("Empty CPU mask");
     return bits;
 }
+
+bool allowedCase(int code) { return code == 0 || code == 100 || code == 200 || code == 300 || code == 400; }
 
 bool Policy::load(const std::string& stock, const std::string& overrides, std::string* error) {
     *this = Policy{};
@@ -340,6 +341,8 @@ bool Policy::aliasesValid(std::string* error) const {
 
 void Policy::resolve(const Opps& actual, const std::array<int, 2>& coreCounts, uint64_t present) {
     if (mResolved) return;
+    mUnresolved = std::make_shared<Policy>(*this);
+    mUnresolved->resetArchiveRegistry();
     mResolved = true;
     mCores = coreCounts;
     mPresent = present;
@@ -443,6 +446,7 @@ void Policy::resolve(const Opps& actual, const std::array<int, 2>& coreCounts, u
 }
 
 Selection Policy::select(const std::string& pkg, int mode) const {
+    if (auto runtime = archiveRuntime()) return runtime->select(pkg, mode);
     std::string profile = pkg;
     bool threads = true;
     auto alias = overlay.aliases.find(pkg);
@@ -481,6 +485,7 @@ size_t Policy::linearBand(const Mode& mode, double temperature, int previous, do
 
 size_t Policy::band(const Mode& mode, double temperature, int previous, double hysteresis) {
     if (mode.hysteresisDeciC >= 0) hysteresis = mode.hysteresisDeciC / 10.0;
+    else if (mode.inheritedHysteresis >= 0) hysteresis = mode.inheritedHysteresis;
     if (mode.linearBands) return linearBand(mode, temperature, previous, hysteresis);
     if (mode.bands.empty()) return 0;
     const size_t positive = positiveCount(mode);

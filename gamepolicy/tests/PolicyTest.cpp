@@ -803,6 +803,8 @@ void threadRecovery(const std::filesystem::path& directory) {
 } // namespace
 int main(int argc, char** argv) {
     try {
+        if (argc == 5 && std::string(argv[1]) == "--archive-protocol")
+            return archiveProtocol(argv[2], argv[3], argv[4]);
         require(argc == 6, "Usage: check WUJI_XML WUJI_OVERLAY BALDUR_XML BALDUR_OVERLAY TEMP_DIR");
         real(argv[1], argv[2]); real(argv[3], argv[4]);
         std::filesystem::create_directories(argv[5]);
@@ -814,6 +816,7 @@ int main(int argc, char** argv) {
         recurringCost(argv[5]);
         jankFeedback(argv[5]);
         tuningTests(argv[1], argv[2], argv[3], argv[4], argv[5]);
+        archiveTests(argv[1], argv[2], argv[3], argv[4], argv[5]);
         recorderTests(argv[5]);
         analysisTests(argv[3], argv[4]);
         return 0;
