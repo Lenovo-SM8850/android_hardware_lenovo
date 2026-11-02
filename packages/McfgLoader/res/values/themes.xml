@@ -1,0 +1,19 @@
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<resources>
+    <style name="Widget.McfgLoader.ButtonBar" parent="Widget.SettingsLib.ButtonBar">
+        <item name="android:minHeight">72dp</item>
+        <item name="android:paddingBottom">16dp</item>
+    </style>
+
+    <!-- 40dp visual height inside a 48dp touch target. -->
+    <style name="Widget.McfgLoader.DialogButton" parent="Widget.SettingsLib.DialogButton">
+        <item name="android:layout_marginTop">0dp</item>
+        <item name="android:layout_marginEnd">@dimen/settingslib_expressive_space_extrasmall4</item>
+        <item name="android:minHeight">48dp</item>
+        <item name="android:minWidth">48dp</item>
+        <item name="android:paddingVertical">0dp</item>
+        <item name="android:paddingHorizontal">@dimen/settingslib_expressive_space_extrasmall6</item>
+        <item name="android:background">@drawable/dialog_button_background</item>
+        <item name="android:textColor">@color/dialog_button_text</item>
+    </style>
+</resources>
