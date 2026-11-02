@@ -1,6 +1,18 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 <resources>
+    <!-- Applied on top of the activity theme so every dialog of this app uses the same theme. -->
+    <style name="ThemeOverlay.Halo" parent="">
+        <item name="alertDialogTheme">@style/Theme.Halo.AlertDialog</item>
+    </style>
+
+    <style name="Theme.Halo.AlertDialog" parent="@style/Theme.AlertDialog.SettingsLib.Expressive">
+        <item name="buttonBarPositiveButtonStyle">@style/Widget.Halo.DialogButton</item>
+        <item name="buttonBarNegativeButtonStyle">@style/Widget.Halo.DialogButton</item>
+        <item name="buttonBarNeutralButtonStyle">@style/Widget.Halo.DialogButton</item>
+        <item name="listPreferredItemHeightSmall">56dp</item>
+    </style>
+
     <!-- Text button: 40dp container inside a 48dp touch target, 14sp label. -->
     <style name="Widget.Halo.DialogButton" parent="@style/Widget.SettingsLib.DialogButton">
         <item name="android:layout_marginTop">0dp</item>

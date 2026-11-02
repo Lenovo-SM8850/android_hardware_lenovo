@@ -13,11 +13,9 @@
     <string name="colours">Colors</string>
     <string name="invalid_colours">Enter a six-digit RGB hex code.</string>
     <string name="speed">Speed</string>
-    <string name="speed_summary">Adjust the effect speed.</string>
     <string name="slow">Slow</string>
     <string name="normal">Normal</string>
     <string name="fast">Fast</string>
-    <string name="fixed_speed">Rainbow rotation uses a fixed speed.</string>
     <string name="brightness">Brightness</string>
     <string name="react_enabled">React to music and games</string>
     <string name="react_music">Music</string>
