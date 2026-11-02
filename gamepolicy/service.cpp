@@ -3,6 +3,8 @@
 #include "Recorder.h"
 #include "Threads.h"
 #include "Tuning.h"
+#include "Graphics.h"
+#include "QspmClient.h"
 #include <aidl/io/github/miner7222/gamepolicy/BnGamePolicy.h>
 #include <aidl/vendor/lenovo/hardware/gametuning/BnGameTuning.h>
 #include <android/binder_manager.h>
@@ -405,6 +407,11 @@ class Service final : public BnGamePolicy {
     // Loads stored tunings and finalizes records left behind by a previous daemon.
     void loadState() {
         {
+            std::lock_guard graphics(mGraphicsMutex);
+            if (!mGraphics.load()) LOG(WARNING) << "Graphics state could not be loaded";
+            if (!mGraphics.retry(nowMs(), *mGraphicsBackend)) LOG(WARNING) << "Graphics reapply pending";
+        }
+        {
             std::lock_guard store(mStoreMutex);
             mStore.load(mPolicy);
             for (int user : mStore.users())
@@ -427,7 +434,7 @@ class Service final : public BnGamePolicy {
             session.processStartTimeTicks <= 0)
             return ndk::ScopedAStatus::fromExceptionCode(EX_ILLEGAL_ARGUMENT);
         EventFlush flush{this};   // Declared before the lock: listeners are called after it is released.
-        std::lock_guard lock(mMutex);
+        std::unique_lock lock(mMutex);
         if (!adopt(client)) return ndk::ScopedAStatus::fromExceptionCode(EX_ILLEGAL_STATE);
         if (session.generation <= mGeneration) return ndk::ScopedAStatus::ok();
         mGeneration = session.generation;
@@ -471,6 +478,19 @@ class Service final : public BnGamePolicy {
         // Sample before the first request. Mode updates must not reuse a preceding band.
         update();
         mWake.notify_one();
+        lock.unlock();
+        {
+            std::lock_guard graphics(mGraphicsMutex);
+            int user = -1;
+            {
+                std::lock_guard state(mMutex);
+                if (mSession && mGeneration == session.generation) user = mSession->userId;
+            }
+            if (user >= 0) {
+                if (!mGraphics.activate(user, *mGraphicsBackend)) LOG(WARNING) << "Graphics reapply pending";
+                mGraphicsWake.notify_one();
+            }
+        }
         return ndk::ScopedAStatus::ok();
     }
     ndk::ScopedAStatus stopSession(int64_t generation, const ndk::SpAIBinder& client) override {
@@ -569,6 +589,19 @@ class Service final : public BnGamePolicy {
                               << " scene_row_applied=" << mScene.active(nowMs());
         mWake.notify_one();
         return ndk::ScopedAStatus::ok();
+    }
+    void runGraphics() {
+        std::unique_lock graphics(mGraphicsMutex);
+        for (;;) {
+            if (!mGraphics.pending()) { mGraphicsWake.wait(graphics); continue; }
+            const auto now = nowMs();
+            if (now < mGraphics.retryAt()) {
+                mGraphicsWake.wait_until(graphics, std::chrono::steady_clock::time_point(
+                    std::chrono::milliseconds(mGraphics.retryAt())));
+                continue;
+            }
+            if (mGraphics.retry(now, *mGraphicsBackend)) LOG(INFO) << "Graphics reapply complete";
+        }
     }
     void run() {
         std::unique_lock lock(mMutex);
@@ -1259,6 +1292,12 @@ class Service final : public BnGamePolicy {
     ProfileView mView;                 // The effective profile of the session.
     Ladders mLadders;
 
+    // Graphics storage and HAL calls (mGraphicsMutex).
+    GraphicsStore mGraphics;
+    std::unique_ptr<GraphicsBackend> mGraphicsBackend = makeQspmClient();
+    std::mutex mGraphicsMutex;
+    std::condition_variable mGraphicsWake;
+
     // Stored tunings, armed games and sensitivity history (mStoreMutex).
     TuningStore mStore;
     std::mutex mStoreMutex;
@@ -1294,6 +1333,34 @@ class Service final : public BnGamePolicy {
 class TuningBinder final : public gt::BnGameTuning {
   public:
     explicit TuningBinder(std::shared_ptr<Service> core) : mCore(std::move(core)) {}
+
+    ndk::ScopedAStatus getGraphicsSupport(bool* out) override {
+        if (!caller()) return denied();
+        std::lock_guard graphics(mCore->mGraphicsMutex);
+        *out = mCore->mGraphicsBackend->supported();
+        return ndk::ScopedAStatus::ok();
+    }
+    ndk::ScopedAStatus getGraphicsOptions(const std::string& packageName, gt::GraphicsOptions* out) override {
+        int user = 0;
+        if (!caller(&user)) return denied();
+        if (!validPackage(packageName)) return invalid("Invalid package");
+        std::lock_guard graphics(mCore->mGraphicsMutex);
+        const auto o = mCore->mGraphics.get(user, packageName);
+        out->textureFiltering = o.textureFiltering; out->anisotropicFiltering = o.anisotropicFiltering;
+        out->mipmapLodBias = o.mipmapLodBias; out->msaaLimit = o.msaaLimit;
+        return ndk::ScopedAStatus::ok();
+    }
+    ndk::ScopedAStatus setGraphicsOptions(const std::string& packageName, const gt::GraphicsOptions& options) override {
+        int user = 0;
+        if (!caller(&user)) return denied();
+        const GraphicsOptions o{options.textureFiltering, options.anisotropicFiltering, options.mipmapLodBias, options.msaaLimit};
+        if (!validPackage(packageName) || !validGraphicsOptions(o)) return invalid("Invalid package or options");
+        std::lock_guard graphics(mCore->mGraphicsMutex);
+        const bool ok = mCore->mGraphics.set(user, packageName, o, *mCore->mGraphicsBackend);
+        mCore->mGraphicsWake.notify_one();
+        if (!ok) return storage("Cannot apply graphics options");
+        return ndk::ScopedAStatus::ok();
+    }
 
     ndk::ScopedAStatus getLimits(gt::PolicyLimits* out) override {
         if (!caller()) return denied();
@@ -1803,6 +1870,7 @@ int main(int argc, char** argv) {
     if (AServiceManager_addService(tuning->asBinder().get(), tuningName.c_str()) != STATUS_OK)
         LOG(ERROR) << "Cannot register " << tuningName;
     ABinderProcess_startThreadPool();
+    std::thread([service] { service->runGraphics(); }).detach();
     service->run();
     return 0;
 }

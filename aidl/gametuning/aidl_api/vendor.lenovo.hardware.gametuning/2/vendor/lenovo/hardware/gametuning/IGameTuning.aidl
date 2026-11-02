@@ -42,6 +42,9 @@ interface IGameTuning {
   vendor.lenovo.hardware.gametuning.RecordingSample[] getRawRecordingSamples(int userId, String id, int offset, long expectedRevision);
   void setRecordingContext(int userId, String packageName, int desiredFps, float renderScale, float refreshRate);
   void invalidateDisplayProbe(int userId, String packageName, int mode);
+  boolean getGraphicsSupport();
+  vendor.lenovo.hardware.gametuning.GraphicsOptions getGraphicsOptions(String packageName);
+  void setGraphicsOptions(String packageName, in vendor.lenovo.hardware.gametuning.GraphicsOptions options);
   const int BASE_BALANCED = 1;
   const int BASE_PERFORMANCE = 2;
   const int BASE_BATTERY = 3;

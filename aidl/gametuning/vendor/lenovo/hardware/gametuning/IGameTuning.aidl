@@ -3,6 +3,7 @@
 package vendor.lenovo.hardware.gametuning;
 
 import vendor.lenovo.hardware.gametuning.GameTuningConfig;
+import vendor.lenovo.hardware.gametuning.GraphicsOptions;
 import vendor.lenovo.hardware.gametuning.ISessionListener;
 import vendor.lenovo.hardware.gametuning.PolicyLimits;
 import vendor.lenovo.hardware.gametuning.PolicyProfile;
@@ -92,4 +93,7 @@ interface IGameTuning {
     const int DIAGNOSIS_PERFORMANCE_LIMITED = 4;
     const int DIAGNOSIS_THERMAL_LIMITED = 5;
     const int DIAGNOSIS_MIXED_LIMITS = 6;
+    boolean getGraphicsSupport();
+    GraphicsOptions getGraphicsOptions(String packageName);
+    void setGraphicsOptions(String packageName, in GraphicsOptions options);
 }

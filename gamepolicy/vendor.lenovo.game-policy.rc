@@ -9,6 +9,7 @@ service vendor.game-policy /vendor/bin/vendor.lenovo.game-policy
 on post-fs-data
     mkdir /data/vendor/gamepolicy 0700 system system
     mkdir /data/vendor/gamepolicy/tuning 0700 system system
+    mkdir /data/vendor/gamepolicy/graphics 0700 system system
     mkdir /data/vendor/gamepolicy/records 0700 system system
 
 # A restart/stop must also clear an unbounded thermal selection. Perf locks expire.

@@ -3,7 +3,7 @@ cc_library_static {
     name: "liblenovo_gamepolicy",
     vendor: true,
     host_supported: true,
-    srcs: ["Policy.cpp", "Archive.cpp", "Threads.cpp", "Tuning.cpp", "Analysis.cpp", "Recorder.cpp"],
+    srcs: ["Policy.cpp", "Archive.cpp", "Threads.cpp", "Tuning.cpp", "Analysis.cpp", "Recorder.cpp", "Graphics.cpp"],
     shared_libs: ["libtinyxml2"],
     export_include_dirs: ["."],
     cflags: ["-Wall", "-Wextra", "-Werror", "-fexceptions"],
@@ -14,12 +14,15 @@ cc_binary {
     name: "vendor.lenovo.game-policy",
     vendor: true,
     compile_multilib: "64",
-    srcs: ["service.cpp"],
+    srcs: ["service.cpp", "QspmClient.cpp"],
+    generated_headers: ["gamepolicy_qspm_headers"],
     static_libs: ["liblenovo_gamepolicy"],
     shared_libs: [
         "io.github.miner7222.gamepolicy-V2-ndk",
         "vendor.lenovo.hardware.gametuning-V2-ndk",
-        "libbinder_ndk", "libbase", "liblog", "libdl", "libtinyxml2",
+        "android.hardware.common-V2-ndk",
+        "//vendor/lenovo/sm8850-common:vendor.qti.qspmhal-V1-ndk",
+        "libcutils", "libbinder_ndk", "libbase", "liblog", "libdl", "libtinyxml2",
     ],
     init_rc: ["vendor.lenovo.game-policy.rc"],
     vintf_fragments: ["manifest.xml"],
@@ -35,9 +38,30 @@ cc_binary_host {
         "tests/ArchiveTest.cpp",
         "tests/RecorderTest.cpp",
         "tests/AnalysisTest.cpp",
+        "tests/GraphicsTest.cpp",
     ],
     static_libs: ["liblenovo_gamepolicy"],
     shared_libs: ["libtinyxml2"],
     cflags: ["-Wall", "-Wextra", "-Werror", "-fexceptions"],
     cpp_std: "c++17",
+}
+
+// Client headers describe the existing interface. Link its shipped implementation only.
+genrule {
+    name: "gamepolicy_qspm_headers",
+    tools: ["aidl"],
+    srcs: ["qspm/**/*.aidl"],
+    out: [
+        "include/aidl/vendor/qti/qspmhal/Command.h",
+        "include/aidl/vendor/qti/qspmhal/IQspmhal.h",
+        "include/aidl/vendor/qti/qspmhal/BnQspmhal.h",
+        "include/aidl/vendor/qti/qspmhal/BpQspmhal.h",
+        "include/aidl/vendor/qti/qspmhal/ParcelableMemory.h",
+        "include/aidl/vendor/qti/qspmhal/ProfData.h",
+    ],
+    export_include_dirs: ["include"],
+    cmd: "set -e; for f in $(in); do case $$f in */vendor/qti/qspmhal/*.aidl) " +
+        "$(location aidl) --lang=ndk --structured --version=1 " +
+        "--hash=d43cd1309bd4375f541a73ac5fe6b77ad29ee729 --stability=vintf --min_sdk_version=29 " +
+        "-I$${f%/vendor/qti/qspmhal/*} -h $(genDir)/include -o $(genDir)/src $$f;; esac; done",
 }

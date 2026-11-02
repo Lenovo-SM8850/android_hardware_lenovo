@@ -10,4 +10,5 @@ int archiveProtocol(const char* stock, const char* overlay, const char* director
 void archiveIoFault(bool failOpen, bool failSync);
 namespace gamepolicy { class Policy; bool archiveRoundTrip(const Policy&); }
 #endif
+void graphicsTests(const char* tempDir);
 void analysisTests(const char* baldurXml, const char* baldurOverlay);
