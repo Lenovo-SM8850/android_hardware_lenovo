@@ -66,6 +66,12 @@
     <string name="expert_key">Custom carrier-config key</string>
     <string name="expert_value">Custom carrier-config value</string>
     <string name="expert_summary">Enter an existing key first. Use JSON arrays for array values.</string>
+    <string name="not_set">Not set</string>
+    <string name="group_calls">Calls and IMS</string>
+    <string name="group_network">Network and 5G</string>
+    <string name="group_display">Status bar and display</string>
+    <string name="group_custom">Custom configuration</string>
+    <string name="group_actions">Actions</string>
     <string name="provision_volte">Provision VoLTE</string>
     <string name="provision_failed">IMS provisioning returned error %1$d.</string>
     <string name="restart_ims">Restart IMS registration</string>
