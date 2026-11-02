@@ -162,11 +162,14 @@ class SettingsFragment : SettingsBasePreferenceFragment() {
     private fun filterApps() {
         appGroup.removeAll()
         val selected = MotionController.selected()
+        // Apps that are on come first; the stable sort keeps the locale order inside both groups.
         val matches =
-            apps.filter {
-                it.label.contains(query.trim(), ignoreCase = true) ||
-                    it.packageName.contains(query.trim(), ignoreCase = true)
-            }
+            apps
+                .filter {
+                    it.label.contains(query.trim(), ignoreCase = true) ||
+                        it.packageName.contains(query.trim(), ignoreCase = true)
+                }
+                .sortedByDescending { it.packageName in selected }
         for (app in matches) {
             appGroup.addPreference(
                 AppSwitchPreference(requireContext()).apply {
