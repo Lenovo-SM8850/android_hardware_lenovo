@@ -1297,7 +1297,8 @@ class TuningBinder final : public gt::BnGameTuning {
 
     ndk::ScopedAStatus getLimits(gt::PolicyLimits* out) override {
         if (!caller()) return denied();
-        const auto& policy = mCore->mPolicy;
+        const auto runtime = mCore->mPolicy.archiveRuntime();
+        const auto& policy = runtime ? *runtime : mCore->mPolicy;
         out->goldKHz = policy.ladder(0);
         out->primeKHz = policy.ladder(1);
         out->gpuHz = policy.ladder(2);
@@ -1308,7 +1309,20 @@ class TuningBinder final : public gt::BnGameTuning {
     }
     ndk::ScopedAStatus getProfileSources(std::vector<gt::ProfileSource>* out) override {
         if (!caller()) return denied();
+        std::lock_guard heavy(mCore->mHeavyMutex);
+        const bool wasReady = mCore->mPolicy.archiveReady();
+        std::string archiveError;
+        if (!mCore->mPolicy.retryBuiltinArchive(&archiveError)) LOG(WARNING) << archiveError;
         const auto& policy = mCore->mPolicy;
+        if (!wasReady && policy.archiveReady()) {
+            std::lock_guard lock(mCore->mMutex);
+            if (auto runtime = policy.archiveRuntime())
+                for (int r = 0; r < 3; ++r) mCore->mLadders[r] = runtime->ladder(r);
+            if (mCore->mSession) mCore->select(mCore->mSession->userId, mCore->mSession->packageName, mCore->mSession->mode);
+        }
+        gt::ProfileSource marker;
+        marker.profileKey = policy.archiveMarker();
+        out->push_back(std::move(marker));
         for (const auto& source : policy.sources) {
             const auto games = policy.games.find(source.key);
             if (games == policy.games.end()) continue;
@@ -1335,8 +1349,22 @@ class TuningBinder final : public gt::BnGameTuning {
         if (!caller()) return denied();
         const char* name = baseModeName(baseMode);
         if (!name) return invalid("Invalid base mode");
-        const auto games = mCore->mPolicy.games.find(profileKey);
-        if (games == mCore->mPolicy.games.end()) return notFound("Unknown profile");
+        const auto& policy = mCore->mPolicy;
+        const std::string prefix = "@builtin/history/";
+        if (profileKey.rfind(prefix, 0) == 0) {
+            try { *out = toProfile(archiveSourceProfile(policy, profileKey, baseMode)); }
+            catch (const std::exception& e) { return invalid(e.what()); }
+            return ndk::ScopedAStatus::ok();
+        }
+        if (auto entry = policy.archived(profileKey)) {
+            *out = toProfile(view(policy, entry->mode, profileKey, baseMode, false,
+                    entry->placement ? kThreadsOwn : kThreadsOff));
+            return ndk::ScopedAStatus::ok();
+        }
+        const auto runtime = policy.archiveRuntime();
+        const auto& profiles = runtime ? runtime->games : policy.games;
+        const auto games = profiles.find(profileKey);
+        if (games == profiles.end()) return notFound("Unknown profile");
         const auto stock = games->second.find(name);
         if (stock == games->second.end()) return notFound("Profile has no such mode");
         *out = toProfile(view(mCore->mPolicy, stock->second, profileKey, baseMode, false, kThreadsOwn));
@@ -1759,6 +1787,8 @@ int main(int argc, char** argv) {
     }
     // Without both cluster masks, custom thread masks cannot be validated against real CPUs.
     policy.resolve(opps, coreCounts, presentKnown ? present : 0);
+    if (!policy.updateBuiltinArchive("/data/vendor/gamepolicy", &error))
+        LOG(WARNING) << "Cannot capture built-in policy: " << error;
     for (const auto& diagnostic : policy.diagnostics) LOG(WARNING) << diagnostic;
     LOG(INFO) << "Loaded game policy " << policy.version << ", " << policy.games.size()
               << " packages, " << policy.sceneLists.size() << " scene metadata profiles";

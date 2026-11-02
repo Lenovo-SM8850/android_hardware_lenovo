@@ -4,12 +4,16 @@
 #include <array>
 #include <cstdint>
 #include <map>
+#include <memory>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <vector>
+namespace tinyxml2 { class XMLDocument; }
 
 namespace gamepolicy {
 bool validDropWindow(int lower, int upper);
+bool allowedCase(int code);
 using Opps = std::array<std::vector<int>, 3>; // Gold/Prime kHz, GPU Hz (descending).
 struct Bounds { int floor = -1; int ceiling = -1; };
 // bounds are request-encoded (CPU MHz, GPU table index); units hold the same row as kHz/Hz, -1 = none.
@@ -36,6 +40,7 @@ struct Mode {
     int dropLowerPermille = -1, dropUpperPermille = -1;
     int dropSensitivity = -1;       // Legacy tuning field; the detector uses a fixed trigger.
     int hysteresisDeciC = -1;      // -1 = overlay hysteresis.
+    double inheritedHysteresis = -1; // Archived overlay value, retaining sub-deciC precision.
     int skinTargetMilliC = -1;
     int powerTargetMw = -1;
 };
@@ -53,6 +58,35 @@ struct Overlay {
 struct Source { std::string key; std::string name; std::vector<std::string> packages; };
 struct Selection { const Mode* mode; std::string profile; bool threadPlacement; };
 struct Decision { int thermalCase = 0; int band = -1; std::vector<int> resources; };
+// Reserved v1 source-key protocol: @builtin/current/<epoch>/<generation> is a catalogue marker;
+// @builtin/pending requests a later retry without advancing any app checkpoint.
+// getSourceProfile(@builtin/history/<epoch>/<package>/<after-generation>, game-mode) returns
+// one matching transition (profileKey = immutable key, variantId = generation,
+// variantName = old XML version), or an empty profileKey at end of history.
+// @builtin/<epoch>/<generation>/<entry> resolves a complete historical selection, independent
+// of the current package, aliases and base-mode mapping. Ordinary sources are unchanged.
+struct ArchivedBuiltin {
+    std::string key, version, profile;
+    uint64_t generation = 0;
+    int gameMode = 1;
+    bool placement = true;
+    std::vector<std::string> packages, excluded;
+    Mode mode;
+};
+class Policy;
+struct BuiltinHistory {
+    std::mutex mutex;
+    uint64_t generation = 0;
+    std::string epoch;
+    std::map<std::string, ArchivedBuiltin> entries;
+    std::string directory;
+    int64_t retryAtMs = 0;
+    std::shared_ptr<Policy> runtime;
+    std::shared_ptr<Policy> checkpoint;
+    std::shared_ptr<tinyxml2::XMLDocument> document;
+    int64_t fileStamp = -1;
+    uint64_t fileSize = 0;
+};
 class Policy {
   public:
     Overlay overlay;
@@ -61,6 +95,19 @@ class Policy {
     std::vector<std::string> diagnostics;
     std::string version;
     std::vector<Source> sources;
+    uint64_t archiveGeneration() const;
+    std::string archiveEpoch() const;
+    std::string archiveMarker() const;
+    std::shared_ptr<const Policy> archiveRuntime() const;
+    // Explicitly isolate simulated/reloaded daemon instances, retaining parsed runtime data.
+    void resetArchiveRegistry() { mHistory = std::make_shared<BuiltinHistory>(); }
+    bool archiveReady() const;
+    // Captures resolved physical values, including all source modes. On failure the
+    // durable checkpoint is retained and existing archives remain available for replay.
+    bool updateBuiltinArchive(const std::string& dir, std::string* error);
+    bool retryBuiltinArchive(std::string* error);
+    std::optional<ArchivedBuiltin> archived(const std::string& key) const;
+    std::optional<ArchivedBuiltin> history(const std::string& package, int mode, uint64_t after) const;
     bool load(const std::string& stock, const std::string& overrides, std::string* error);
     // Resolve every index once, before any session can request a resource.
     void resolve(const Opps& actual, const std::array<int, 2>& coreCounts = {}, uint64_t present = 0);
@@ -84,6 +131,8 @@ class Policy {
     static Decision evaluate(const Mode& mode, std::optional<double> temperature,
                              int64_t sampleAgeMs, int previous, double hysteresis);
   private:
+    std::shared_ptr<BuiltinHistory> mHistory = std::make_shared<BuiltinHistory>();
+    std::shared_ptr<Policy> mUnresolved;
     Opps mDeclared;
     Opps mTables;
     std::array<int, 2> mCores{};

@@ -150,14 +150,19 @@ std::vector<Step> stockSteps(const Mode& mode) {
 
 bool normalize(const Policy& policy, TuningRecord& r, std::string* error) {
     try {
+        const auto runtime = policy.archiveRuntime();
+        const Policy& hardware = runtime ? *runtime : policy;
         if (!validPackage(r.package)) return fail(error, "Invalid package name");
         if (r.mode < 1 || r.mode > 3) return fail(error, "Invalid game mode");
         if (r.baseProfile.empty()) r.baseProfile = policy.select(r.package, r.mode).profile;
         const auto base = policy.games.find(r.baseProfile);
-        if (base == policy.games.end()) return fail(error, "Unknown base profile");
+        const auto archived = policy.archived(r.baseProfile);
+        const bool reserved = r.baseProfile.rfind("@builtin/", 0) == 0;
+        const bool missingArchive = reserved && !archived;
+        if (base == policy.games.end() && !archived && !reserved) return fail(error, "Unknown base profile");
         const char* baseName = baseModeName(r.baseMode);
         if (!baseName) return fail(error, "Invalid base mode");
-        if (r.baseMode == kBaseMaximum && !base->second.count(baseName)) return fail(error, "Base profile has no maximum mode");
+        if (!reserved && r.baseMode == kBaseMaximum && !base->second.count(baseName)) return fail(error, "Base profile has no maximum mode");
         for (int i = 0; i < 3; ++i) {
             if (r.maxOffsets[i] < -10 || r.maxOffsets[i] > 10 || r.minOffsets[i] < -10 || r.minOffsets[i] > 10)
                 return fail(error, "Offset out of range");
@@ -175,14 +180,14 @@ bool normalize(const Policy& policy, TuningRecord& r, std::string* error) {
                 if (t <= previous) return fail(error, "Step temperatures must increase");
                 previous = t;
             }
-            if (!checkUnits(policy, step.units, "Step " + std::to_string(i), error)) return false;
+            if (!missingArchive && !checkUnits(hardware, step.units, "Step " + std::to_string(i), error)) return false;
         }
         const int c = r.thermalCase;
         if (c != kKeep && c != 100 && c != 200 && c != 300 && c != 400) return fail(error, "Invalid thermal case");
         if (r.uclampMin != kKeep && r.uclampMin != -1 && !stepped(r.uclampMin, 0, 100, 5)) return fail(error, "Invalid uclamp");
         if (r.gpuDefaultHz != kKeep && r.gpuDefaultHz != -1) {
-            const auto gpu = policy.ladder(2);
-            if (!member(gpu, r.gpuDefaultHz)) return fail(error, "GPU default is not an OPP step");
+            const auto gpu = hardware.ladder(2);
+            if (!missingArchive && !member(gpu, r.gpuDefaultHz)) return fail(error, "GPU default is not an OPP step");
         }
         if (!tristate(r.keepCoresOnline) || !tristate(r.frameBoost) || !tristate(r.jankBoost))
             return fail(error, "Invalid switch value");
@@ -198,13 +203,13 @@ bool normalize(const Policy& policy, TuningRecord& r, std::string* error) {
         for (const auto& row : r.scenes) {
             if (row.sceneId < 0 || row.sceneId > 100000 || !ids.insert(row.sceneId).second) return fail(error, "Invalid scene id");
             if (row.holdMs != 0 && !stepped(row.holdMs, 100, 10000, 100)) return fail(error, "Invalid scene hold time");
-            if (!checkUnits(policy, row.units, "Scene " + std::to_string(row.sceneId), error)) return false;
+            if (!missingArchive && !checkUnits(hardware, row.units, "Scene " + std::to_string(row.sceneId), error)) return false;
         }
         if (r.customThreads.size() > 16) return fail(error, "Too many thread rules");
         int realtime = 0;
         for (const auto& rule : r.customThreads) {
             if (!validName(rule.name)) return fail(error, "Invalid thread name");
-            if (!rule.mask || !policy.presentMask() || (rule.mask & ~policy.presentMask()))
+            if (!missingArchive && (!rule.mask || !hardware.presentMask() || (rule.mask & ~hardware.presentMask())))
                 return fail(error, "Invalid thread CPU mask");
             if (rule.rtPriority != -1 && (rule.rtPriority < 90 || rule.rtPriority > 99))
                 return fail(error, "Invalid thread priority");
@@ -241,15 +246,43 @@ bool build(const Policy& policy, const TuningRecord& input, Mode* out, Selection
         if (!out) return fail(error, "No output mode");
         TuningRecord r = input;
         if (!normalize(policy, r, error)) return false;
-        const Selection own = policy.select(r.package, r.mode);
+        const auto archived = policy.archived(r.baseProfile);
+        const auto runtime = policy.archiveRuntime();
+        const Policy& hardware = runtime ? *runtime : policy;
+        if (!archived && r.baseProfile.rfind("@builtin/", 0) == 0) {
+            const auto current = policy.select(r.package, r.mode);
+            *out = *current.mode;
+            if (selection) *selection = {out, current.profile, current.threadPlacement};
+            return true;
+        }
+        const Selection own = archived ? Selection{&archived->mode, archived->profile, archived->placement}
+                                       : policy.select(r.package, r.mode);
         const Mode& ownMode = *own.mode;
-        const auto& baseModes = policy.games.at(r.baseProfile);
-        auto found = baseModes.find(baseModeName(r.baseMode));
-        if (found == baseModes.end()) found = baseModes.find("Balance");
-        const Mode& base = found->second;
+        const Mode* basePtr = &ownMode;
+        if (!archived) {
+            const auto& baseModes = hardware.games.at(r.baseProfile);
+            auto found = baseModes.find(baseModeName(r.baseMode));
+            if (found == baseModes.end()) found = baseModes.find("Balance");
+            basePtr = &found->second;
+        }
+        const Mode& base = *basePtr;
+        // An untouched archive must keep the original band algorithm, boost rows, exact
+        // hints, placement and gating identity, including values absent from PolicyProfile.
+        if (archived && r.steps.empty() && allZero(r.maxOffsets) && allZero(r.minOffsets) &&
+            r.thermalCase == kKeep && r.uclampMin == kKeep && r.gpuDefaultHz == kKeep &&
+            r.keepCoresOnline == kKeep && r.frameBoost == kKeep && r.jankBoost == kKeep &&
+            r.frameBoostSteps.empty() && r.jankBoostSteps.empty() && r.startDelayMs == kKeep &&
+            r.threadRules == kThreadsOwn && r.sceneMode == kKeep && r.scenes.empty() &&
+            r.customThreads.empty() && r.boostLengthMs == kKeep && r.dropSensitivity == kKeep &&
+            r.dropLowerPermille == -1 && r.dropUpperPermille == -1 &&
+            r.hysteresisDeciC == kKeep && r.skinTargetMilliC == kKeep && r.powerTargetMw == kKeep) {
+            *out = base;
+            if (selection) *selection = {out, own.profile, own.threadPlacement};
+            return true;
+        }
         std::array<std::vector<int>, 3> ladders;
         for (int i = 0; i < 3; ++i) {
-            ladders[i] = policy.ladder(i);
+            ladders[i] = hardware.ladder(i);
             if (ladders[i].empty()) return fail(error, "Policy has no runtime OPP table");
         }
 
@@ -259,7 +292,7 @@ bool build(const Policy& policy, const TuningRecord& input, Mode* out, Selection
         Mode m = base;
         m.linearBands = true;
         m.bands.clear();
-        for (const auto& step : steps) m.bands.push_back(encode(policy, step.temperature, step.units));
+        for (const auto& step : steps) m.bands.push_back(encode(hardware, step.temperature, step.units));
 
         const auto chosen = [](int on, const std::vector<int>& list, const std::optional<std::array<int, 3>>& stock) -> std::optional<std::array<int, 3>> {
             if (on == kKeep) return stock;
@@ -295,7 +328,7 @@ bool build(const Policy& policy, const TuningRecord& input, Mode* out, Selection
                         units[i].floor = std::min(units[i].floor, high);
                     }
                 }
-                rows.push_back(encode(policy, step.temperature, units));
+                rows.push_back(encode(hardware, step.temperature, units));
             }
             return rows;
         };
@@ -306,7 +339,7 @@ bool build(const Policy& policy, const TuningRecord& input, Mode* out, Selection
         else if (r.uclampMin != kKeep) setHint(m.perfHints, kUclamp, r.uclampMin);
         if (r.gpuDefaultHz == -1) removeHint(m.perfHints, kGpuDefault);
         else if (r.gpuDefaultHz != kKeep) {
-            const auto& table = policy.tables()[2];
+            const auto& table = hardware.tables()[2];
             const auto it = std::find(table.begin(), table.end(), r.gpuDefaultHz);
             if (it == table.end()) return fail(error, "GPU default is not in the runtime table");
             setHint(m.perfHints, kGpuDefault, static_cast<int>(it - table.begin()));
@@ -315,8 +348,8 @@ bool build(const Policy& policy, const TuningRecord& input, Mode* out, Selection
             removeHint(m.perfHints, kGoldCores);
             removeHint(m.perfHints, kPrimeCores);
         } else if (r.keepCoresOnline == 1) {
-            if (policy.cores(0) > 0) setHint(m.perfHints, kGoldCores, policy.cores(0));
-            if (policy.cores(1) > 0) setHint(m.perfHints, kPrimeCores, policy.cores(1));
+            if (hardware.cores(0) > 0) setHint(m.perfHints, kGoldCores, hardware.cores(0));
+            if (hardware.cores(1) > 0) setHint(m.perfHints, kPrimeCores, hardware.cores(1));
         }
 
         if (r.thermalCase != kKeep) m.thermalCase = r.thermalCase;
@@ -358,7 +391,7 @@ bool build(const Policy& policy, const TuningRecord& input, Mode* out, Selection
             const std::array<int, 3> none{};
             for (const auto& row : r.scenes) {
                 if (!row.enabled || row.holdMs <= 0) continue;
-                m.scenes.emplace(row.sceneId, Scene{row.holdMs, encode(policy, 0, shifted(ladders, row.units, none, none))});
+                m.scenes.emplace(row.sceneId, Scene{row.holdMs, encode(hardware, 0, shifted(ladders, row.units, none, none))});
             }
         } else m.scenes = ownMode.scenes;
 
@@ -369,6 +402,7 @@ bool build(const Policy& policy, const TuningRecord& input, Mode* out, Selection
 }
 
 ProfileView view(const Policy& policy, const Mode& mode, const std::string& key, int baseMode, bool tuned, int threadRules) {
+    if (auto runtime = policy.archiveRuntime()) return view(*runtime, mode, key, baseMode, tuned, threadRules);
     ProfileView v;
     v.profileKey = key; v.baseMode = baseMode; v.tuned = tuned; v.threadRules = threadRules;
     v.thermalCase = mode.thermalCase;
@@ -398,11 +432,34 @@ ProfileView view(const Policy& policy, const Mode& mode, const std::string& key,
     }
     v.boostLengthMs = mode.boostLengthMs;
     v.dropSensitivity = -1;
+    v.dropLowerPermille = mode.dropLowerPermille; v.dropUpperPermille = mode.dropUpperPermille;
     v.hysteresisDeciC = mode.hysteresisDeciC >= 0 ? mode.hysteresisDeciC
-                                                  : static_cast<int>(std::lround(policy.overlay.hysteresis * 10));
+            : static_cast<int>(std::lround((mode.inheritedHysteresis >= 0
+                    ? mode.inheritedHysteresis : policy.overlay.hysteresis) * 10));
     v.skinTargetMilliC = mode.skinTargetMilliC;
     v.powerTargetMw = mode.powerTargetMw;
     return v;
+}
+
+ProfileView archiveSourceProfile(const Policy& policy, const std::string& query, int gameMode) {
+    const std::string prefix = "@builtin/history/";
+    if (query.rfind(prefix, 0) != 0 || gameMode < 1 || gameMode > 3)
+        throw std::runtime_error("Invalid archive query");
+    const auto epochEnd = query.find('/', prefix.size()), split = query.rfind('/');
+    if (epochEnd == std::string::npos || split <= epochEnd) throw std::runtime_error("Invalid archive query");
+    const auto epoch = query.substr(prefix.size(), epochEnd - prefix.size());
+    const auto pkg = query.substr(epochEnd + 1, split - epochEnd - 1), after = query.substr(split + 1);
+    if (epoch != policy.archiveEpoch() || !policy.archiveReady() || !validPackage(pkg) || after.empty() || after.size() > 19 ||
+        !std::all_of(after.begin(), after.end(), [](char c) { return c >= '0' && c <= '9'; }))
+        throw std::runtime_error("Invalid archive query");
+    const auto cursor = std::stoull(after);
+    if (cursor > policy.archiveGeneration()) throw std::runtime_error("Invalid archive generation");
+    ProfileView out;
+    if (auto entry = policy.history(pkg, gameMode, cursor)) {
+        out.profileKey = entry->key; out.baseMode = gameMode;
+        out.variantId = std::to_string(entry->generation); out.variantName = entry->version;
+    }
+    return out;
 }
 
 namespace {
@@ -717,7 +774,13 @@ void TuningStore::load(const Policy& policy) {
                 try {
                     TuningRecord r = readRecord(e);
                     std::string error;
-                    if (!normalize(policy, r, &error)) throw std::runtime_error(error);
+                    if (!normalize(policy, r, &error)) {
+                        // Missing archives and temporarily unavailable runtime OPPs must not
+                        // erase a saved selection on the next unrelated store write.
+                        if (r.baseProfile.rfind("@builtin/", 0) != 0 || !validPackage(r.package) || r.mode < 1 || r.mode > 3)
+                            throw std::runtime_error(error);
+                        diagnostics.push_back(name + "/tuning " + r.package + ": Deferred archive validation: " + error);
+                    }
                     if (data.tunings.size() >= kMaxTunings) throw std::runtime_error("limit");
                     if (!data.tunings.emplace(std::make_pair(r.package, r.mode), r).second) throw std::runtime_error("Duplicate entry");
                 } catch (const std::exception& error) {

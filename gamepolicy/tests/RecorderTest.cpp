@@ -36,6 +36,9 @@ extern "C" int __wrap_fsync(int fd) {
     if (failDirectorySync && ::fstat(fd, &st) == 0 && S_ISDIR(st.st_mode)) { errno = EIO; return -1; }
     return __real_fsync(fd);
 }
+void archiveIoFault(bool failOpen, bool failSync) {
+    failDirectoryOpen = failOpen; failDirectorySync = failSync;
+}
 #endif
 
 using namespace gamepolicy;

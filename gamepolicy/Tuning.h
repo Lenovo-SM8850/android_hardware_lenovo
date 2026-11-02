@@ -81,6 +81,8 @@ bool normalize(const Policy&, TuningRecord& record, std::string* error);
 bool build(const Policy&, const TuningRecord&, Mode* out, Selection* selection, std::string* error);
 
 ProfileView view(const Policy&, const Mode& mode, const std::string& key, int baseMode, bool tuned, int threadRules);
+// Handles only reserved archive history queries; throws on malformed/stale epoch requests.
+ProfileView archiveSourceProfile(const Policy&, const std::string& query, int gameMode);
 
 bool validPackage(const std::string& package);
 
