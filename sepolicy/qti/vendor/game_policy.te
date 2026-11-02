@@ -10,6 +10,7 @@ hal_server_domain(vendor_game_policy, hal_game_tuning)
 binder_use(vendor_game_policy)
 # libqti-perfd-client talks to the existing perf arbiter; no frequency writes here.
 hal_client_domain(vendor_game_policy, vendor_hal_perf)
+hal_client_domain(vendor_game_policy, vendor_hal_qspmhal)
 set_prop(vendor_game_policy, vendor_lenovo_game_thermal_case_prop)
 # Init owns thermal/control and daemon restart, including crash cleanup.
 set_prop(vendor_init, vendor_lenovo_game_thermal_case_prop)
