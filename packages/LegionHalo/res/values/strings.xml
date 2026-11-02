@@ -2,7 +2,7 @@
 
 <resources>
     <string name="app_name">Legion Halo</string>
-    <string name="settings_summary">Legion Halo colors and effects</string>
+    <string name="settings_summary">Set back-panel light colors and effects.</string>
     <string name="enabled">Use Legion Halo</string>
     <string name="availability">Works with the screen on and Battery Saver off.</string>
     <string name="effect">Effect</string>
