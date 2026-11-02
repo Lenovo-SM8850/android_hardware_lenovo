@@ -16,11 +16,17 @@ int gameModeToBase(const Policy&, int gameMode); // overlay.modes[gameMode] -> b
 struct Step { double temperature = 0; std::array<Bounds, 3> units{}; }; // Bounds{floor = min, ceiling = max}.
 struct SceneRowRec { int sceneId = 0; bool enabled = true; int holdMs = 0; std::array<Bounds, 3> units{}; };
 struct ThreadRuleRec { std::string name; uint64_t mask = 0; int rtPriority = -1; };
-struct ProbeRec { int resource = -1; int deltaSteps = 0; std::string baseline; int64_t armedAtEpochMs = 0; };
+struct ProbeRec { int resource = -1; int deltaSteps = 0; std::string baseline; int64_t armedAtEpochMs = 0;
+                  int64_t baselineRevision = 0; int analysisTargetFps = 0, diagnosis = 0, analysisVersion = 0;
+                  float renderScale = -1, refreshRate = -1; };
 struct SensitivityEntry {
     std::string package; int mode = 1;
     int resource = -1, deltaSteps = 0;
     double dFloor5 = 0, dTail95 = 0, dPowerMw = 0, dSkinPeakC = 0;
+    std::string baselineId, resultId;
+    int64_t baselineRevision = 0, resultRevision = 0;
+    int analysisTargetFps = 0, diagnosis = 0, analysisVersion = 0;
+    float renderScale = -1, refreshRate = -1;
 };
 
 struct TuningRecord {
@@ -94,6 +100,7 @@ class TuningStore {
     std::vector<std::string> armedPackages(int user) const;
     bool addSensitivity(int user, const SensitivityEntry&, std::string* error);
     std::vector<SensitivityEntry> sensitivity(int user, const std::string& pkg, int mode) const;
+    bool invalidateEvidence(int user, const std::string& pkg, int mode, const std::string& id, std::string* error);
     std::vector<std::string> diagnostics;
   private:
     struct UserData {

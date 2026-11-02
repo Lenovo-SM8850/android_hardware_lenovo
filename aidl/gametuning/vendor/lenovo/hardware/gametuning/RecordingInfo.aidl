@@ -17,4 +17,9 @@ parcelable RecordingInfo {
     int endReason;
     PolicyProfile profile;
     RecordingSummary summary;
+    int originalDurationMs;
+    int originalSampleCount;
+    int keepStartMs;
+    int keepEndMs;
+    long rangeRevision;
 }

@@ -273,6 +273,8 @@ gt::RecordingSample toSample(const Sample& s, int targetFps) {
     r.cpuUtilPermille.assign(s.cpuUtilPermille.begin(), s.cpuUtilPermille.end());
     r.gpuBusyPercent = s.gpuBusyPercent; r.batteryMilliC = s.batteryMilliC; r.batteryPercent = s.batteryPercent;
     r.targetFps = static_cast<float>(targetFps);
+    r.requestedFps = s.requestedFps; r.throttleFps = s.throttleFps;
+    r.desiredTargetFps = s.desiredTargetFps; r.renderScale = s.renderScale; r.refreshRate = s.refreshRate;
     return r;
 }
 gt::RecordingSummary toSummary(const Summary& s) {
@@ -287,6 +289,12 @@ gt::RecordingSummary toSummary(const Summary& s) {
     r.throttled = s.throttled; r.mixed = s.mixed;
     r.floor5Fps = s.floor5Fps; r.tail95 = s.tail95; r.jankPer1000 = s.jankPer1000;
     r.scenesSeen.assign(s.scenesSeen.begin(), s.scenesSeen.end());
+    r.diagnosis = s.cause.diagnosis; r.ceilingFps = s.cause.ceilingFps;
+    r.analysisTargetFps = s.cause.analysisTargetFps; r.desiredTargetFps = s.cause.desiredTargetFps;
+    r.confirmedCap = s.cause.confirmed; r.causeEvidence = s.cause.evidence;
+    r.causeCoverage = s.cause.coverage; r.classifiedSamples = s.cause.classifiedSamples;
+    r.shortfallSamples = s.cause.shortfallSamples;
+    r.causeCounts.assign(s.cause.counts.begin(), s.cause.counts.end()); r.analysisVersion = kAnalysisVersion;
     return r;
 }
 gt::RecordingInfo toInfo(const RecordHeader& h) {
@@ -296,6 +304,8 @@ gt::RecordingInfo toInfo(const RecordHeader& h) {
     r.endReason = h.endReason;
     r.profile = toProfile(h.profile);
     r.summary = toSummary(h.summary);
+    r.originalDurationMs = h.originalDurationMs; r.originalSampleCount = h.originalSampleCount;
+    r.keepStartMs = h.keepStartMs; r.keepEndMs = h.keepEndMs; r.rangeRevision = h.rangeRevision;
     return r;
 }
 
@@ -950,6 +960,8 @@ class Service final : public BnGamePolicy {
         {
             std::lock_guard store(mStoreMutex);
             armed = mStore.armed(session.userId, session.packageName);
+            // A new recording waits for a fresh app-side snapshot; never reuse another session's display intent.
+            if (armed) mRecordingContext.erase({session.userId, session.packageName});
         }
         if (!armed) return;
         discoverProbes();
@@ -1087,6 +1099,14 @@ class Service final : public BnGamePolicy {
         s.sceneId = mScene.scene().value_or(-1);
         s.mode = mSession->mode;
         s.profileGeneration = mProfileGeneration;
+        {
+            std::lock_guard store(mStoreMutex);
+            const auto context = mRecordingContext.find({mSession->userId, mSession->packageName});
+            if (context != mRecordingContext.end()) {
+                s.desiredTargetFps = context->second.desiredFps;
+                s.renderScale = context->second.scale; s.refreshRate = context->second.refresh;
+            }
+        }
         mRecorder.sample(s, now);
         // The recorder pauses itself at its sample limit.
         if (mRecorder.paused()) {
@@ -1097,6 +1117,7 @@ class Service final : public BnGamePolicy {
     // Run thread, no session lock held: locate the file that was just written and close any sensitivity probe.
     // Finished files are replaced atomically, so reading them needs no file lock.
     void processFinished(const RecordInfo& info) {
+        std::lock_guard heavy(mHeavyMutex);
         std::optional<RecordHeader> next;
         for (int k = 0; k < kIdCandidates && !next; ++k) {
             const std::string id = std::to_string(info.epochMs + k) + "_" + info.package;
@@ -1142,13 +1163,21 @@ class Service final : public BnGamePolicy {
             current->pendingProbe->deltaSteps != probe.deltaSteps || current->pendingProbe->baseline != probe.baseline ||
             current->pendingProbe->armedAtEpochMs != probe.armedAtEpochMs)
             return;
-        if (attributable && baseline) {
+        if (attributable && baseline && baseline->rangeRevision == probe.baselineRevision &&
+            compatibleProbe(baseline->summary, next->summary) && probe.analysisVersion == kAnalysisVersion &&
+            baseline->summary.cause.analysisTargetFps == probe.analysisTargetFps &&
+            baseline->summary.cause.diagnosis == probe.diagnosis &&
+            compatibleDisplay(probe.renderScale, probe.refreshRate, baseline->summary.renderScale, baseline->summary.refreshRate)) {
             const Sensitivity result = closeProbe(probe.resource, probe.deltaSteps, baseline->summary, next->summary);
             SensitivityEntry entry;
             entry.package = next->package; entry.mode = next->mode;
             entry.resource = result.resource; entry.deltaSteps = result.deltaSteps;
             entry.dFloor5 = result.dFloor5; entry.dTail95 = result.dTail95;
             entry.dPowerMw = result.dPowerMw; entry.dSkinPeakC = result.dSkinPeakC;
+            entry.baselineId = baseline->id; entry.resultId = next->id;
+            entry.baselineRevision = baseline->rangeRevision; entry.resultRevision = next->rangeRevision;
+            entry.analysisTargetFps = probe.analysisTargetFps; entry.diagnosis = probe.diagnosis; entry.analysisVersion = kAnalysisVersion;
+            entry.renderScale = probe.renderScale; entry.refreshRate = probe.refreshRate;
             std::string error;
             if (!mStore.addSensitivity(info.userId, entry, &error)) {
                 LOG(WARNING) << "Cannot store sensitivity for " << next->package << ": " << error;
@@ -1233,6 +1262,8 @@ class Service final : public BnGamePolicy {
     // Stored tunings, armed games and sensitivity history (mStoreMutex).
     TuningStore mStore;
     std::mutex mStoreMutex;
+    struct RecordingContext { int desiredFps = -1; float scale = -1, refresh = -1; };
+    std::map<std::pair<int, std::string>, RecordingContext> mRecordingContext;
     std::map<Key, PendingProposal> mProposals;
     std::map<Key, int64_t> mProbeSince;   // Epoch ms at which a proposal-backed tuning was stored.
 
@@ -1404,6 +1435,7 @@ class TuningBinder final : public gt::BnGameTuning {
     ndk::ScopedAStatus deleteRecording(int32_t userId, const std::string& id) override {
         if (!callerFor(userId)) return denied();
         if (!validRecordId(id)) return invalid("Invalid record id");
+        std::lock_guard heavy(mCore->mHeavyMutex);
         std::lock_guard files(mCore->mFilesMutex);
         if (mCore->mWriting && mCore->mWriting->userId == userId) {
             const auto& writing = *mCore->mWriting;
@@ -1426,6 +1458,7 @@ class TuningBinder final : public gt::BnGameTuning {
         const auto found = std::find_if(all.begin(), all.end(), [&](const RecordHeader& h) { return h.id == id; });
         if (found == all.end()) return notFound("No such record");
         const RecordHeader header = *found;
+        if (header.summary.mixed) return analysisError(kMixed);
         std::vector<TuningRecord> tunings;
         {
             std::lock_guard store(mCore->mStoreMutex);
@@ -1455,7 +1488,7 @@ class TuningBinder final : public gt::BnGameTuning {
             }
         }
         for (const auto& stored : tunings) {
-            if (!stored.enabled || stored.package == header.package) continue;
+            if (!stored.enabled || (stored.package == header.package && (!header.summary.cause.confirmed || stored.mode != header.mode))) continue;
             TuningRecord record = stored;
             record.package = header.package; record.mode = header.mode;
             record.pendingProbe.reset();
@@ -1481,6 +1514,9 @@ class TuningBinder final : public gt::BnGameTuning {
             r.score = static_cast<float>(item.score); r.reasons = reasons;
             r.directions.assign(item.directions.begin(), item.directions.end());
             r.profile = toProfile(item.candidate.profile);
+            r.rangeRevision = header.rangeRevision; r.diagnosis = header.summary.cause.diagnosis;
+            r.ceilingFps = header.summary.cause.ceilingFps; r.confirmedCap = header.summary.cause.confirmed;
+            r.analysisVersion = kAnalysisVersion;
             out->push_back(std::move(r));
         }
         return ndk::ScopedAStatus::ok();
@@ -1494,6 +1530,7 @@ class TuningBinder final : public gt::BnGameTuning {
         RecordHeader header;
         if (!mCore->mRecorder.header(userId, id, &header) || !mCore->mRecorder.read(userId, id, &samples))
             return notFound("No such record");
+        if (header.summary.mixed) return analysisError(kMixed);
         TuningRecord current;
         std::vector<Sensitivity> history;
         {
@@ -1505,6 +1542,16 @@ class TuningBinder final : public gt::BnGameTuning {
                 current.baseProfile = header.profile.profileKey; current.baseMode = header.profile.baseMode;
             }
             for (const auto& entry : mCore->mStore.sensitivity(userId, header.package, header.mode)) {
+                RecordHeader baseHeader, resultHeader;
+                if (entry.baselineId.empty() || entry.resultId.empty() || entry.analysisVersion != kAnalysisVersion ||
+                    !mCore->mRecorder.header(userId, entry.baselineId, &baseHeader) ||
+                    !mCore->mRecorder.header(userId, entry.resultId, &resultHeader) ||
+                    baseHeader.rangeRevision != entry.baselineRevision || resultHeader.rangeRevision != entry.resultRevision ||
+                    !compatibleProbe(baseHeader.summary, resultHeader.summary) ||
+                    !compatibleProbe(baseHeader.summary, header.summary) ||
+                    !compatibleDisplay(entry.renderScale, entry.refreshRate, header.summary.renderScale, header.summary.refreshRate) ||
+                    entry.analysisTargetFps != header.summary.cause.analysisTargetFps ||
+                    entry.diagnosis != header.summary.cause.diagnosis) continue;
                 Sensitivity s;
                 s.resource = entry.resource; s.deltaSteps = entry.deltaSteps;
                 s.dFloor5 = entry.dFloor5; s.dTail95 = entry.dTail95;
@@ -1527,8 +1574,92 @@ class TuningBinder final : public gt::BnGameTuning {
         out->preview = toProfile(proposal.preview);
         out->probeResource = proposal.probeResource;
         out->probeDeltaSteps = proposal.probeDeltaSteps;
+        out->rangeRevision = header.rangeRevision; out->diagnosis = header.summary.cause.diagnosis;
+        out->ceilingFps = header.summary.cause.ceilingFps; out->confirmedCap = header.summary.cause.confirmed;
+        out->analysisVersion = kAnalysisVersion;
         // The app applies the proposal unchanged; setTuning recognizes it and records the probe.
         if (proposal.probeResource >= 0) rememberProposal(userId, proposal, id);
+        else {
+            std::lock_guard store(mCore->mStoreMutex);
+            mCore->mProposals.erase(Service::Key{userId, header.package, header.mode});
+        }
+        return ndk::ScopedAStatus::ok();
+    }
+    ndk::ScopedAStatus setRecordingRange(int32_t userId, const std::string& id, int32_t start,
+                                         int32_t end, int64_t revision, gt::RecordingInfo* out) override {
+        if (!callerFor(userId)) return denied();
+        if (!validRecordId(id)) return invalid("Invalid record id");
+        std::lock_guard heavy(mCore->mHeavyMutex);
+        std::lock_guard store(mCore->mStoreMutex);
+        std::lock_guard files(mCore->mFilesMutex);
+        RecordHeader header;
+        if (!mCore->mRecorder.header(userId, id, &header)) return notFound("No such record");
+        if (header.rangeRevision != revision) return invalid("Stale range revision");
+        std::vector<Sample> raw;
+        if (!mCore->mRecorder.raw(userId, id, &raw)) return notFound("No such record");
+        if (!normalizeKeepRange(raw, header.originalDurationMs, &start, &end)) return invalid("Invalid range");
+        if (start == header.keepStartMs && end == header.keepEndMs) {
+            const int result = mCore->mRecorder.keepRange(userId, id, start, end, revision, mCore->mLadders, &header);
+            if (result) return storage("Cannot sync range revision " + std::to_string(header.rangeRevision));
+            *out = toInfo(header); return ndk::ScopedAStatus::ok();
+        }
+        std::string error;
+        if (!mCore->mStore.invalidateEvidence(userId, header.package, header.mode, id, &error)) return storage(error);
+        const Service::Key key{userId, header.package, header.mode};
+        mCore->mProposals.erase(key); mCore->mProbeSince.erase(key);
+        const int result = mCore->mRecorder.keepRange(userId, id, start, end, revision, mCore->mLadders, &header);
+        if (result == 1) return notFound("No such record");
+        if (result == 2) return invalid("Invalid range");
+        if (result == 3) return invalid("Stale range revision");
+        if (result == 5) return storage("Cannot sync range revision " + std::to_string(header.rangeRevision));
+        if (result) return storage("Cannot save range");
+        *out = toInfo(header);
+        return ndk::ScopedAStatus::ok();
+    }
+    ndk::ScopedAStatus recordingPage(int32_t userId, const std::string& id, int32_t offset, int64_t revision,
+                                     bool raw, std::vector<gt::RecordingSample>* out) {
+        if (!callerFor(userId)) return denied();
+        if (offset < 0 || !validRecordId(id)) return invalid("Invalid record id or offset");
+        std::lock_guard heavy(mCore->mHeavyMutex);
+        RecordHeader header; std::vector<Sample> samples;
+        if (!mCore->mRecorder.header(userId, id, &header)) return notFound("No such record");
+        if (header.rangeRevision != revision) return invalid("Stale range revision");
+        if (!(raw ? mCore->mRecorder.raw(userId, id, &samples) : mCore->mRecorder.read(userId, id, &samples)))
+            return notFound("No such record");
+        const auto targets = sampleTargets(samples);
+        for (size_t i = static_cast<size_t>(offset); i < samples.size() && i < static_cast<size_t>(offset) + kSampleChunk; ++i)
+            out->push_back(toSample(samples[i], targets[i]));
+        return ndk::ScopedAStatus::ok();
+    }
+    ndk::ScopedAStatus getEffectiveRecordingSamples(int32_t userId, const std::string& id, int32_t offset,
+                                                    int64_t revision, std::vector<gt::RecordingSample>* out) override {
+        return recordingPage(userId, id, offset, revision, false, out);
+    }
+    ndk::ScopedAStatus getRawRecordingSamples(int32_t userId, const std::string& id, int32_t offset,
+                                              int64_t revision, std::vector<gt::RecordingSample>* out) override {
+        return recordingPage(userId, id, offset, revision, true, out);
+    }
+    ndk::ScopedAStatus setRecordingContext(int32_t userId, const std::string& pkg, int32_t fps,
+                                           float scale, float refresh) override {
+        if (!callerFor(userId)) return denied();
+        if (!validPackage(pkg) || fps < -1 || fps > 1000 || !std::isfinite(scale) || !std::isfinite(refresh) ||
+            (scale != -1 && (scale <= 0 || scale > 1)) || (refresh != -1 && (refresh <= 0 || refresh > 1000)))
+            return invalid("Invalid recording context");
+        std::lock_guard store(mCore->mStoreMutex);
+        mCore->mRecordingContext[{userId, pkg}] = {fps, scale, refresh};
+        return ndk::ScopedAStatus::ok();
+    }
+    ndk::ScopedAStatus invalidateDisplayProbe(int32_t userId, const std::string& pkg, int32_t mode) override {
+        if (!callerFor(userId)) return denied();
+        if (!validPackage(pkg) || (mode < 1 || mode > 3)) return invalid("Invalid package or mode");
+        std::lock_guard store(mCore->mStoreMutex);
+        const Service::Key key{userId, pkg, mode};
+        mCore->mProposals.erase(key); mCore->mProbeSince.erase(key);
+        auto tuning = mCore->mStore.find(userId, pkg, mode);
+        if (tuning && tuning->pendingProbe) {
+            tuning->pendingProbe.reset(); std::string error;
+            if (!mCore->mStore.put(userId, *tuning, &error)) return storage(error);
+        }
         return ndk::ScopedAStatus::ok();
     }
     ndk::ScopedAStatus registerSessionListener(const std::shared_ptr<gt::ISessionListener>& listener) override {
@@ -1547,6 +1678,9 @@ class TuningBinder final : public gt::BnGameTuning {
   private:
     // Remembers an autoTune proposal so that the matching setTuning can record the probe.
     void rememberProposal(int userId, const Proposal& proposal, const std::string& baseline) {
+        RecordHeader header;
+        if (!mCore->mRecorder.header(userId, baseline, &header) ||
+            !compatibleDisplay(header.summary.renderScale, header.summary.refreshRate, header.summary.renderScale, header.summary.refreshRate)) return;
         TuningRecord tuning = proposal.tuning;
         std::string error;
         if (!normalize(mCore->mPolicy, tuning, &error)) return;
@@ -1554,7 +1688,9 @@ class TuningBinder final : public gt::BnGameTuning {
         std::lock_guard store(mCore->mStoreMutex);
         if (mCore->mProposals.size() >= kMaxProposals) mCore->mProposals.erase(mCore->mProposals.begin());
         cacheProposal(mCore->mProposals, userId, std::move(tuning),
-                      ProbeRec{proposal.probeResource, proposal.probeDeltaSteps, baseline});
+                      ProbeRec{proposal.probeResource, proposal.probeDeltaSteps, baseline, 0,
+                               header.rangeRevision, header.summary.cause.analysisTargetFps, header.summary.cause.diagnosis, kAnalysisVersion,
+                               header.summary.renderScale, header.summary.refreshRate});
     }
     static bool caller(int* userId = nullptr) {
         const uid_t uid = AIBinder_getCallingUid();

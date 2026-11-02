@@ -47,4 +47,9 @@ parcelable RecordingSample {
   int batteryMilliC = (-273000) /* -273000 */;
   int batteryPercent = (-1) /* -1 */;
   float targetFps = (-1.0f) /* -1.000000f */;
+  float requestedFps = (-1.0f) /* -1.000000f */;
+  float throttleFps = (-1.0f) /* -1.000000f */;
+  int desiredTargetFps = (-1) /* -1 */;
+  float renderScale = (-1.0f) /* -1.000000f */;
+  float refreshRate = (-1.0f) /* -1.000000f */;
 }

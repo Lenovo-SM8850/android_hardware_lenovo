@@ -18,8 +18,8 @@ constexpr char kMagic[] = "game-policy-record 2";
 constexpr char kMagicV1[] = "game-policy-record 1";
 constexpr char kSamplesLine[] = "samples";
 constexpr char kColumns[] = "t,fps,fpsMin,jank,frames,gold,prime,gpu,goldCap,primeCap,gpuCap,skin,cpu,gpu,power,band,case,"
-                            "flags,mode,gen,scene,maxFt,utilGold,utilPrime,gpuBusy,battMilliC,battPct,reqFps,throttleFps";
-constexpr size_t kOldColumns = 20, kV1Columns = 27, kColumnCount = 29;
+                            "flags,mode,gen,scene,maxFt,utilGold,utilPrime,gpuBusy,battMilliC,battPct,reqFps,throttleFps,desiredFps,scale,refresh";
+constexpr size_t kOldColumns = 20, kV1Columns = 27, kColumnCount = 32;
 constexpr char kRecSuffix[] = ".rec";
 constexpr char kPartialSuffix[] = ".rec.partial";
 
@@ -120,14 +120,22 @@ bool writeAll(int fd, const char* data, size_t size) {
     }
     return true;
 }
-bool writeAtomic(const std::string& path, const std::string& text) {
+bool syncDirectory(const std::string& path) {
+    const int dir = ::open(path.substr(0, path.rfind('/')).c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+    if (dir < 0) return false;
+    const bool synced = ::fsync(dir) == 0;
+    return ::close(dir) == 0 && synced;
+}
+bool writeAtomic(const std::string& path, const std::string& text, bool* published = nullptr) {
+    if (published) *published = false;
     const std::string tmp = path + ".tmp";
     const int fd = ::open(tmp.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0600);
     if (fd < 0) return false;
     bool ok = writeAll(fd, text.data(), text.size()) && ::fsync(fd) == 0;
     ok = ::close(fd) == 0 && ok;
     if (!ok || ::rename(tmp.c_str(), path.c_str()) != 0) { ::unlink(tmp.c_str()); return false; }
-    return true;
+    if (published) *published = true;
+    return syncDirectory(path);
 }
 bool readFile(const std::string& path, std::string* text) {
     const int fd = ::open(path.c_str(), O_RDONLY | O_CLOEXEC);
@@ -180,13 +188,14 @@ std::string formatRow(const Sample& s) {
     add(num(s.cpuUtilPermille[0])); add(num(s.cpuUtilPermille[1]));
     add(num(s.gpuBusyPercent)); add(num(s.batteryMilliC)); add(num(s.batteryPercent));
     add(exact(s.requestedFps)); add(exact(s.throttleFps));
+    add(num(s.desiredTargetFps)); add(exact(s.renderScale)); add(exact(s.refreshRate));
     row += '\n';
     return row;
 }
 // Version 1 rows have 20 or 27 columns, version 2 rows 29.
 bool parseRow(const std::string& line, int version, Sample* out) {
     const auto f = split(line, ',');
-    if (version == 1 ? f.size() != kOldColumns && f.size() != kV1Columns : f.size() != kColumnCount) return false;
+    if (version == 1 ? f.size() != kOldColumns && f.size() != kV1Columns : f.size() != 29 && f.size() != kColumnCount) return false;
     Sample s;
     int* ints[] = {&s.timeMs, nullptr, nullptr, &s.jankFrames, &s.frames, &s.cur[0], &s.cur[1], &s.cur[2],
                    &s.cap[0], &s.cap[1], &s.cap[2], &s.skinMilliC, &s.cpuMilliC, &s.gpuMilliC, &s.powerMw, &s.band,
@@ -197,6 +206,9 @@ bool parseRow(const std::string& line, int version, Sample* out) {
         else if (i == 2) { if (!parseFloat(f[i], &s.fpsMin)) return false; }
         else if (i == 27) { if (!parseFloat(f[i], &s.requestedFps)) return false; }
         else if (i == 28) { if (!parseFloat(f[i], &s.throttleFps)) return false; }
+        else if (i == 29) { if (!parseInt32(f[i], &s.desiredTargetFps)) return false; }
+        else if (i == 30) { if (!parseFloat(f[i], &s.renderScale)) return false; }
+        else if (i == 31) { if (!parseFloat(f[i], &s.refreshRate)) return false; }
         else if (!parseInt32(f[i], ints[i])) return false;
     }
     *out = s;
@@ -266,11 +278,12 @@ std::string formatSummary(const Summary& s) {
     std::vector<std::string> scenes;
     for (int id : s.scenesSeen) scenes.push_back(num(id));
     f.push_back(join(scenes, ';'));
+    f.push_back(exact(s.renderScale)); f.push_back(exact(s.refreshRate));
     return join(f, ',');
 }
 bool parseSummary(const std::string& text, Summary* out) {
     const auto f = split(text, ',');
-    if (f.size() != 22 && f.size() != 26 && f.size() != 27) return false;
+    if (f.size() != 22 && f.size() != 26 && f.size() != 27 && f.size() != 29) return false;
     Summary s;
     int mixed = 0;
     float* floats[] = {nullptr, &s.avgFps, &s.medianFps, &s.lowFps1, &s.lowFps5, nullptr, &s.hitRate, &s.stability,
@@ -285,12 +298,13 @@ bool parseSummary(const std::string& text, Summary* out) {
     s.mixed = mixed != 0;
     if (f.size() >= 26) {
         // Version 2 adds floorRatio before the scene list; older summaries leave it unknown (-1).
-        const size_t scenes = f.size() == 27 ? 26 : 25;
+        const size_t scenes = f.size() >= 27 ? 26 : 25;
         if (!parseFloat(f[22], &s.floor5Fps) || !parseFloat(f[23], &s.tail95) || !parseFloat(f[24], &s.jankPer1000) ||
-            (f.size() == 27 && !parseFloat(f[25], &s.floorRatio)) || !parseList(f[scenes], &s.scenesSeen)) return false;
+            (f.size() >= 27 && !parseFloat(f[25], &s.floorRatio)) || !parseList(f[scenes], &s.scenesSeen)) return false;
     } else {
         s.floor5Fps = s.lowFps5;
     }
+    if (f.size() == 29 && (!parseFloat(f[27], &s.renderScale) || !parseFloat(f[28], &s.refreshRate))) return false;
     *out = s;
     return true;
 }
@@ -385,6 +399,12 @@ bool parseRecord(const std::string& text, bool partial, Parsed* out) {
         }
         else if (key == "variant") p.h.profile.variantId = value;
         else if (key == "variantName") p.h.profile.variantName = value;
+        else if (key == "keep") {
+            const auto f = split(value, ','); long long revision;
+            if (f.size() != 3 || !parseInt32(f[0], &p.h.keepStartMs) || !parseInt32(f[1], &p.h.keepEndMs) ||
+                !parseInt(f[2], &revision) || revision < 0) return false;
+            p.h.rangeRevision = revision;
+        }
     }
     if (!sawSamples || !hasPackage || !hasStart || !hasProfile || i >= lines.size()) return false;
     ++i;   // Column names.
@@ -408,31 +428,24 @@ bool parseRecord(const std::string& text, bool partial, Parsed* out) {
     *out = std::move(p);
     return true;
 }
-// Header and summary of a finished file without parsing its sample rows: only the row count and the last row
-// (for the duration) are taken from them.
-bool parseHeaderOnly(const std::string& text, Parsed* out) {
-    const size_t summary = text.rfind("\nsummary=");
-    const std::string marker = std::string("\n") + kSamplesLine + "\n";
-    const size_t samples = text.find(marker);
-    if (summary == std::string::npos || samples == std::string::npos || samples >= summary) return false;
-    const size_t columnsEnd = text.find('\n', samples + marker.size());
-    if (columnsEnd == std::string::npos || columnsEnd > summary) return false;
-    const size_t count = static_cast<size_t>(std::count(text.begin() + static_cast<std::ptrdiff_t>(columnsEnd) + 1,
-                                                        text.begin() + static_cast<std::ptrdiff_t>(summary) + 1, '\n'));
-    // Head, columns line and summary line only; the rows are skipped.
-    Parsed parsed;
-    if (!parseRecord(text.substr(0, columnsEnd + 1) + text.substr(summary + 1), false, &parsed)) return false;
-    int duration = 0;
-    if (count > 0) {
-        const size_t lastStart = text.rfind('\n', summary - 1) + 1;
-        Sample last;
-        if (!parseRow(text.substr(lastStart, summary - lastStart), parsed.version, &last)) return false;
-        duration = last.timeMs;
+void effective(Parsed& p, const Ladders& ladders) {
+    auto& h = p.h;
+    h.originalDurationMs = h.durationMs; h.originalSampleCount = h.sampleCount;
+    if (h.rangeRevision == 0) h.keepEndMs = h.originalDurationMs;
+    const bool originalMixed = h.summary.mixed;
+    p.rows.erase(std::remove_if(p.rows.begin(), p.rows.end(), [&](const Sample& s) {
+        return s.timeMs < h.keepStartMs || s.timeMs > h.keepEndMs;
+    }), p.rows.end());
+    for (auto& s : p.rows) s.selectedGameplay = h.keepStartMs > 0 || h.keepEndMs < h.originalDurationMs;
+    h.durationMs = h.keepEndMs - h.keepStartMs; h.sampleCount = static_cast<int>(p.rows.size());
+    if (h.rangeRevision) h.summary = summarize(p.rows, ladders);
+    else {
+        const auto measured = summarize(p.rows, ladders);
+        h.summary.cause = measured.cause;
+        h.summary.renderScale = measured.renderScale; h.summary.refreshRate = measured.refreshRate;
+        h.summary.mixed |= measured.mixed;
     }
-    parsed.h.sampleCount = static_cast<int>(count);
-    parsed.h.durationMs = duration;
-    *out = std::move(parsed);
-    return true;
+    h.summary.mixed |= originalMixed;
 }
 } // namespace
 
@@ -458,6 +471,7 @@ void Recorder::retain(int user) {
 }
 
 void Recorder::recover(const Ladders& ladders) {
+    mLadders = ladders; mLaddersInitialized = true;
     try {
         for (const auto& entry : listDir(mRoot)) {
             const int user = userOf(entry);
@@ -543,6 +557,7 @@ void Recorder::pause(int64_t nowMs, int reason) {
 }
 
 void Recorder::finish(const Ladders& ladders) {
+    if (!mLaddersInitialized) { mLadders = ladders; mLaddersInitialized = true; }
     try {
         if (!mSession) return;
         Session s = std::move(*mSession);
@@ -643,8 +658,9 @@ bool Recorder::header(int user, const std::string& id, RecordHeader* out) const 
         if (!validId(id) || user < 0) return false;
         std::string text;
         Parsed parsed;
-        if (!readFile(userDir(mRoot, user) + "/" + id + kRecSuffix, &text) || !parseHeaderOnly(text, &parsed) ||
+        if (!readFile(userDir(mRoot, user) + "/" + id + kRecSuffix, &text) || !parseRecord(text, false, &parsed) ||
             !parsed.hasEnd || !parsed.hasSummary) return false;
+        effective(parsed, mLadders);
         parsed.h.id = id;
         parsed.h.userId = user;
         if (out) *out = std::move(parsed.h);
@@ -661,11 +677,69 @@ bool Recorder::read(int user, const std::string& id, std::vector<Sample>* sample
         Parsed parsed;
         if (!readFile(userDir(mRoot, user) + "/" + id + kRecSuffix, &text) || !parseRecord(text, false, &parsed) ||
             !parsed.hasEnd || !parsed.hasSummary) return false;
+        effective(parsed, mLadders);
         if (samples) *samples = std::move(parsed.rows);
         return true;
     } catch (...) {
         return false;
     }
+}
+
+bool Recorder::raw(int user, const std::string& id, std::vector<Sample>* samples) const {
+    if (!validId(id) || user < 0) return false;
+    std::string text; Parsed parsed;
+    if (!readFile(userDir(mRoot, user) + "/" + id + kRecSuffix, &text) || !parseRecord(text, false, &parsed) ||
+        !parsed.hasEnd || !parsed.hasSummary) return false;
+    *samples = std::move(parsed.rows);
+    return true;
+}
+
+bool normalizeKeepRange(const std::vector<Sample>& rows, int duration, int* start, int* end) {
+    if (*start < 0 || *start > *end || *end > duration) return false;
+    const auto first = std::lower_bound(rows.begin(), rows.end(), *start, [](const Sample& s, int t) { return s.timeMs < t; });
+    const auto last = std::upper_bound(rows.begin(), rows.end(), *end, [](int t, const Sample& s) { return t < s.timeMs; });
+    if (first == last || std::none_of(first, last, [](const Sample& s) { return valid(s); })) return false;
+    if (*start != 0) *start = first->timeMs;
+    if (*end != duration) *end = (last - 1)->timeMs;
+    return true;
+}
+
+int Recorder::keepRange(int user, const std::string& id, int start, int end, int64_t revision,
+                        const Ladders& ladders, RecordHeader* out) {
+    if (!validId(id) || user < 0) return 1;
+    const std::string path = userDir(mRoot, user) + "/" + id + kRecSuffix;
+    std::string text; Parsed p;
+    if (!readFile(path, &text) || !parseRecord(text, false, &p) || !p.hasEnd || !p.hasSummary) return 1;
+    if (revision != p.h.rangeRevision) return 3;
+    if (p.h.rangeRevision == INT64_MAX || !normalizeKeepRange(p.rows, p.h.durationMs, &start, &end)) return 2;
+    const int oldEnd = p.h.rangeRevision ? p.h.keepEndMs : p.h.durationMs;
+    if (start == p.h.keepStartMs && end == oldEnd) {
+        if (!header(user, id, out)) return 4;
+        // Also completes a retry after a rename whose directory sync failed.
+        return syncDirectory(path) ? 0 : 5;
+    }
+    p.h.keepStartMs = start; p.h.keepEndMs = end; ++p.h.rangeRevision;
+    // Keep the raw header, sample rows and original summary byte-for-byte, including legacy versions.
+    const size_t begin = text.find("\nkeep=");
+    if (begin != std::string::npos) text.erase(begin + 1, text.find('\n', begin + 1) - begin);
+    const size_t selected = text.find("\nkeptSummary=");
+    if (selected != std::string::npos) text.erase(selected + 1, text.find('\n', selected + 1) - selected);
+    effective(p, ladders);
+    const std::string metadata = "keep=" + num(start) + "," + num(end) + "," + num(p.h.rangeRevision) +
+        "\nkeptSummary=" + formatSummary(p.h.summary) + "\n";
+    text.insert(text.find("\nsamples\n") + 1, metadata);
+    bool published = false;
+    if (!writeAtomic(path, text, &published)) {
+        // Rename cannot be undone safely: reconcile the visible revision and report uncertain durability.
+        if (published) {
+            p.h.id = id; p.h.userId = user;
+            if (out) *out = p.h;
+            header(user, id, out);
+            return 5;
+        }
+        return 4;
+    }
+    return header(user, id, out) ? 0 : 4;
 }
 
 bool Recorder::remove(int user, const std::string& id) {

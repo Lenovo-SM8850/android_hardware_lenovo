@@ -12,7 +12,11 @@ struct RecordHeader {
     std::string id; int userId = 0; std::string package; int mode = 1;
     int64_t startEpochMs = 0; int durationMs = 0; int sampleCount = 0; int endReason = 0;
     ProfileView profile; Summary summary;
+    int originalDurationMs = 0, originalSampleCount = 0, keepStartMs = 0, keepEndMs = 0;
+    int64_t rangeRevision = 0;
 };
+// Snap an inclusive original-time interval inward to recorded timestamps, retaining the full-range sentinel 0.
+bool normalizeKeepRange(const std::vector<Sample>&, int durationMs, int* startMs, int* endMs);
 enum EndReason { kEndStopped = 1, kEndExited = 2, kEndLimit = 3, kEndInterrupted = 4 };
 
 // Not thread-safe and without threads of its own; the service guards it with its own locks.
@@ -42,6 +46,11 @@ class Recorder {
     bool read(int user, const std::string& id, std::vector<Sample>* samples) const;
     bool remove(int user, const std::string& id);
     bool header(int user, const std::string& id, RecordHeader* out) const;
+    bool raw(int user, const std::string& id, std::vector<Sample>* samples) const;
+    // Returns 0 success, 1 missing, 2 invalid, 3 stale revision, 4 unpublished storage failure,
+    // 5 published but directory durability failed (out contains the visible revision; retry with that revision).
+    int keepRange(int user, const std::string& id, int startMs, int endMs, int64_t expectedRevision,
+                  const Ladders&, RecordHeader* out);
 
   private:
     struct Session {
@@ -58,5 +67,7 @@ class Recorder {
     void retain(int user);
     std::string mRoot;
     std::optional<Session> mSession;
+    Ladders mLadders;
+    bool mLaddersInitialized = false;
 };
 } // namespace gamepolicy

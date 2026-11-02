@@ -18,6 +18,21 @@ enum Reason { kTargetMet = 1, kFpsShort = 2, kCpuBound = 4, kGpuBound = 8, kTher
 enum ChangeKind { kChangeMax = 1, kChangeMin = 2, kChangeThermal = 3, kChangeFrameBoost = 4 };
 enum AnalysisError { kOk = 0, kNotFound = 1, kNotEnoughData = 2, kMixed = 3 };
 
+enum Diagnosis { kUnclear = 0, kGameCap = 1, kLikelyGameCap = 2, kFpsLimited = 3,
+                 kPerformanceLimited = 4, kThermalLimit = 5, kMixedLimits = 6 };
+enum Evidence { kAppCadence = 1, kPlateau = 2, kHeadroom = 4, kSaturation = 8,
+                kThermalEvidence = 16, kThrottleCeiling = 32, kGameplayRange = 64 };
+struct CapSegment { int startMs = 0, endMs = 0, targetFps = 0; bool confirmed = false; };
+struct Cause {
+    int diagnosis = kUnclear, ceilingFps = 0, analysisTargetFps = 0, desiredTargetFps = -1;
+    int evidence = 0, classifiedSamples = 0, shortfallSamples = 0;
+    float coverage = 0;
+    bool confirmed = false;
+    std::array<int, 7> counts{};
+    std::vector<CapSegment> segments;
+};
+constexpr int kAnalysisVersion = 2;
+
 struct Sample {             // Field order = RecordingSample = CSV column order.
     int timeMs = 0; float fps = -1, fpsMin = -1; int jankFrames = 0, frames = 0;
     std::array<int, 3> cur{};  std::array<int, 3> cap{-1, -1, -1};
@@ -27,6 +42,9 @@ struct Sample {             // Field order = RecordingSample = CSV column order.
     std::array<int, 2> cpuUtilPermille{-1, -1};
     int gpuBusyPercent = -1, batteryMilliC = kTemperatureUnavailable, batteryPercent = -1;
     float requestedFps = -1, throttleFps = -1;   // Frame rate signals reported last in the second, -1 when none.
+    int desiredTargetFps = -1;
+    float renderScale = -1, refreshRate = -1;
+    bool selectedGameplay = false; // An explicitly kept range supplies gameplay provenance, never scene IDs.
 };
 struct Summary {            // Field order = DESIGN 9.3, then the SPEC v2 additions.
     int validSamples = 0; float avgFps = 0, medianFps = 0, lowFps1 = 0, lowFps5 = 0; int targetFps = 0;
@@ -35,12 +53,16 @@ struct Summary {            // Field order = DESIGN 9.3, then the SPEC v2 additi
     std::array<int, 3> avgCur{}; std::array<float, 3> pegged{}; float throttled = 0; bool mixed = false;
     float floor5Fps = 0, tail95 = -1, jankPer1000 = 0; std::vector<int> scenesSeen;
     float floorRatio = -1;  // Q05(fps / target) over all targets; -1 when unknown, see steadyRatio().
+    Cause cause;
+    float renderScale = -1, refreshRate = -1;
 };
 using Ladders = std::array<std::vector<int>, 3>;   // Ascending; Policy::ladder(r).
 
 bool hasTemperature(int milliC);
 bool valid(const Sample&);                          // Ready, fps >= 1 and timeMs >= 10000.
 Summary summarize(const std::vector<Sample>&, const Ladders&);
+Cause classify(const std::vector<Sample>&);
+Summary tuningSummary(const std::vector<Sample>&, const Ladders&);
 
 // Frame rate a signal pair resolves to: the smaller positive value, snapped to the nearest common target within 3 %,
 // else rounded. -1 when neither is positive.
@@ -73,6 +95,9 @@ struct Sensitivity { int resource = -1; int deltaSteps = 0;
                      double dFloor5 = 0, dTail95 = 0, dPowerMw = 0, dSkinPeakC = 0; };
 // resource/deltaSteps come from the stored probe; unknown differences (-1 sources) become 0.
 Sensitivity closeProbe(int resource, int deltaSteps, const Summary& baseline, const Summary& next);
+bool compatibleProbe(const Summary& baseline, const Summary& next);
+// Unknown display provenance cannot establish a controlled hardware-only comparison.
+bool compatibleDisplay(float baselineScale, float baselineRefresh, float nextScale, float nextRefresh);
 
 struct Change { int kind = 0; int resource = -1; int before = 0; int after = 0; };
 struct Proposal { TuningRecord tuning; std::vector<Change> changes; int reasons = 0; ProfileView preview;
