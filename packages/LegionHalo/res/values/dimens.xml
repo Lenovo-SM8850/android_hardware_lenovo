@@ -11,6 +11,7 @@
     <dimen name="colour_picker_track_radius">4dp</dimen>
     <dimen name="colour_picker_thumb_size">20dp</dimen>
     <dimen name="colour_picker_thumb_stroke">2dp</dimen>
-    <dimen name="colour_swatch_size">24dp</dimen>
+    <dimen name="colour_swatch_size">28dp</dimen>
     <dimen name="colour_swatch_stroke">1dp</dimen>
+    <dimen name="colour_card_gap">4dp</dimen>
 </resources>

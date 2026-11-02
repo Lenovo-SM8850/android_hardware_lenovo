@@ -9,10 +9,7 @@ import android.os.Looper
 import android.os.UserHandle
 import android.provider.Settings
 import android.view.View
-import androidx.preference.PreferenceGroupAdapter
 import androidx.preference.PreferenceManager
-import androidx.recyclerview.widget.ItemTouchHelper
-import androidx.recyclerview.widget.RecyclerView
 import androidx.preference.ListPreference
 import androidx.preference.PreferenceCategory
 import androidx.preference.SwitchPreferenceCompat
@@ -33,11 +30,7 @@ class SettingsActivity : CollapsingToolbarBaseActivity() {
 }
 
 class SettingsFragment : SettingsBasePreferenceFragment() {
-    private val colours = mutableListOf<ColourPreference>()
-    private lateinit var colourGroup: PreferenceCategory
-    private var dragging = false
-    private var multipleColours = true
-    private var touchHelper: ItemTouchHelper? = null
+    private lateinit var colourGrid: ColourGridPreference
     private lateinit var reactive: SwitchPreferenceCompat
     private val reactiveObserver = object : ContentObserver(Handler(Looper.getMainLooper())) {
         override fun onChange(selfChange: Boolean) {
@@ -68,15 +61,20 @@ class SettingsFragment : SettingsBasePreferenceFragment() {
             setDefaultValue("1")
             summaryProvider = ListPreference.SimpleSummaryProvider.getInstance()
         }
+        colourGrid = ColourGridPreference(context).apply {
+            key = "colours_grid"
+            colours = ColourPalette.load()
+            onSelect = { index ->
+                ColourPickerDialog.newInstance(index, ColourPalette.load()[index]).show(
+                    parentFragmentManager, "colour_picker")
+            }
+            onMove = { from, to -> moveColour(from, to) }
+        }
         fun updateSpeed(type: String) {
             speed.isEnabled = type == "1" || type == "3"
             speed.summaryProvider = if (type == "2") null else ListPreference.SimpleSummaryProvider.getInstance()
             if (type == "2") speed.setSummary(R.string.speed_summary)
-            multipleColours = type == "2" || type == "3"
-            colours.forEachIndexed { index, colour ->
-                colour.isVisible = multipleColours || index == 0
-                colour.reorderable = multipleColours
-            }
+            colourGrid.multiple = type == "2" || type == "3"
         }
         val effect = ListPreference(context).apply {
             key = "effect"
@@ -89,26 +87,11 @@ class SettingsFragment : SettingsBasePreferenceFragment() {
             setOnPreferenceChangeListener { _, value -> updateSpeed(value as String); true }
         }
         screen.addPreference(effect)
-        colourGroup = PreferenceCategory(context).apply {
+        val colourGroup = PreferenceCategory(context).apply {
             setTitle(R.string.colours)
         }
         screen.addPreference(colourGroup)
-        ColourPalette.load().forEachIndexed { index, value ->
-            val colour = ColourPreference(context, value).apply {
-                key = "colour_$index"
-                isPersistent = false
-                onDrag = { holder -> touchHelper?.startDrag(holder) }
-                onMove = { offset -> moveColour(colours.indexOf(this), colours.indexOf(this) + offset) }
-                setOnPreferenceClickListener {
-                    ColourPickerDialog.newInstance(colours.indexOf(this), this.colour).show(
-                        parentFragmentManager, "colour_picker")
-                    true
-                }
-            }
-            colours.add(colour)
-            colourGroup.addPreference(colour)
-        }
-        updateColourLabels()
+        colourGroup.addPreference(colourGrid)
         screen.addPreference(speed)
         val brightness = SliderPreference(context).apply {
             key = "brightness"
@@ -154,70 +137,18 @@ class SettingsFragment : SettingsBasePreferenceFragment() {
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
-        touchHelper = ItemTouchHelper(object : ItemTouchHelper.SimpleCallback(
-            ItemTouchHelper.UP or ItemTouchHelper.DOWN, 0) {
-            override fun isLongPressDragEnabled() = false
-
-            override fun getMovementFlags(recyclerView: RecyclerView, holder: RecyclerView.ViewHolder): Int {
-                val item = (recyclerView.adapter as? PreferenceGroupAdapter)?.getItem(holder.bindingAdapterPosition)
-                return if (multipleColours && item is ColourPreference && item.isEnabled) {
-                    super.getMovementFlags(recyclerView, holder)
-                } else {
-                    0
-                }
-            }
-
-            override fun onMove(recyclerView: RecyclerView, source: RecyclerView.ViewHolder,
-                target: RecyclerView.ViewHolder): Boolean {
-                val adapter = recyclerView.adapter as? PreferenceGroupAdapter ?: return false
-                val from = adapter.getItem(source.bindingAdapterPosition) as? ColourPreference ?: return false
-                val to = adapter.getItem(target.bindingAdapterPosition) as? ColourPreference ?: return false
-                return moveColour(colours.indexOf(from), colours.indexOf(to))
-            }
-
-            override fun onSelectedChanged(holder: RecyclerView.ViewHolder?, actionState: Int) {
-                super.onSelectedChanged(holder, actionState)
-                if (actionState == ItemTouchHelper.ACTION_STATE_DRAG) dragging = true
-            }
-
-            override fun clearView(recyclerView: RecyclerView, holder: RecyclerView.ViewHolder) {
-                super.clearView(recyclerView, holder)
-                dragging = false
-                refreshGroupShapes()
-            }
-
-            override fun onSwiped(holder: RecyclerView.ViewHolder, direction: Int) {}
-        }).also { it.attachToRecyclerView(listView) }
     }
 
-    private fun moveColour(from: Int, to: Int): Boolean {
-        if (!multipleColours || from !in colours.indices || to !in colours.indices || from == to) return false
-        colours.add(to, colours.removeAt(from))
-        // The colour rows keep their own order inside the Colours group.
-        colours.forEachIndexed { index, preference -> preference.order = index }
-        updateColourLabels()
-        ColourPalette.save(colours.map { it.colour })
-        refreshGroupShapes()
-        return true
-    }
-
-    // The grouped card corners depend on each row's position, and the comparison callback keeps
-    // moved rows from being rebound. Rebind once nothing is being dragged.
-    private fun refreshGroupShapes() {
-        listView?.post { if (!dragging) listView?.adapter?.notifyDataSetChanged() }
-    }
-
-    private fun updateColourLabels() {
-        colours.forEachIndexed { index, preference ->
-            preference.title = getString(R.string.colour_number, index + 1)
-            preference.canMoveUp = index > 0
-            preference.canMoveDown = index < colours.lastIndex
-        }
+    // Moving a colour keeps the slots in place and shifts the colours between them.
+    private fun moveColour(from: Int, to: Int) {
+        val palette = ColourPalette.load().toMutableList()
+        if (!colourGrid.multiple || from !in palette.indices || to !in palette.indices || from == to) return
+        palette.add(to, palette.removeAt(from))
+        ColourPalette.save(palette)
     }
 
     private fun updateColours() {
-        val palette = ColourPalette.load()
-        colours.forEachIndexed { index, preference -> preference.colour = palette[index] }
+        colourGrid.colours = ColourPalette.load()
     }
 
     override fun onStart() {
@@ -235,12 +166,6 @@ class SettingsFragment : SettingsBasePreferenceFragment() {
         requireContext().contentResolver.unregisterContentObserver(reactiveObserver)
         RingController.preferences.unregisterOnSharedPreferenceChangeListener(colourListener)
         super.onStop()
-    }
-
-    override fun onDestroyView() {
-        touchHelper?.attachToRecyclerView(null)
-        touchHelper = null
-        super.onDestroyView()
     }
 }
 

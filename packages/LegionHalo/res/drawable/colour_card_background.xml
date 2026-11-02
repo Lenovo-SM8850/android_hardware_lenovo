@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<ripple xmlns:android="http://schemas.android.com/apk/res/android"
+    android:color="?android:attr/colorControlHighlight">
+    <item>
+        <selector>
+            <item android:state_activated="true">
+                <shape android:shape="rectangle">
+                    <corners android:radius="@dimen/settingslib_expressive_radius_large1" />
+                    <solid android:color="@color/settingslib_materialColorSecondaryContainer" />
+                </shape>
+            </item>
+            <item>
+                <shape android:shape="rectangle">
+                    <corners android:radius="@dimen/settingslib_expressive_radius_large1" />
+                    <solid android:color="@color/settingslib_materialColorSurfaceBright" />
+                </shape>
+            </item>
+        </selector>
+    </item>
+    <item android:id="@android:id/mask">
+        <shape android:shape="rectangle">
+            <corners android:radius="@dimen/settingslib_expressive_radius_large1" />
+            <solid android:color="@android:color/white" />
+        </shape>
+    </item>
+</ripple>
