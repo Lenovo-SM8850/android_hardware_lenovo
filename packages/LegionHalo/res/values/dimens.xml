@@ -2,6 +2,7 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 <resources>
     <dimen name="colour_picker_wheel_size">240dp</dimen>
+    <dimen name="colour_picker_wheel_size_wide">176dp</dimen>
     <dimen name="colour_picker_wheel_inset">14dp</dimen>
     <dimen name="colour_picker_selector_radius">10dp</dimen>
     <dimen name="colour_picker_selector_ring">3dp</dimen>

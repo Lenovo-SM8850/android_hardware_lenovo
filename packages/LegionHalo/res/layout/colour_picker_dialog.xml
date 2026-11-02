@@ -8,9 +8,16 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="vertical"
-        android:paddingTop="@dimen/settingslib_expressive_space_extrasmall4"
+        android:paddingTop="@dimen/settingslib_expressive_space_small4"
         android:paddingStart="?attr/dialogPreferredPadding"
         android:paddingEnd="?attr/dialogPreferredPadding">
+
+        <TextView
+            android:id="@+id/colour_title"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:textAppearance="@style/TextAppearance.SettingsLib.HeadlineSmall"
+            android:textColor="@color/settingslib_materialColorOnSurface" />
 
         <io.github.miner7222.halo.ColourWheelView
             android:id="@+id/colour_wheel"
@@ -28,14 +35,8 @@
             android:thumb="@drawable/colour_brightness_thumb"
             android:contentDescription="@string/brightness" />
 
-        <EditText
-            android:id="@+id/colour_code"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:inputType="text|textNoSuggestions"
-            android:singleLine="true"
-            android:textDirection="ltr"
-            android:hint="@string/colour_code_hint"
-            android:contentDescription="@string/colour_code" />
+        <include layout="@layout/colour_picker_code" />
+
+        <include layout="@layout/colour_picker_buttons" />
     </LinearLayout>
 </ScrollView>
