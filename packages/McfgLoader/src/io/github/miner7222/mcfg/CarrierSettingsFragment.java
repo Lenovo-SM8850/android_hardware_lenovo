@@ -305,7 +305,7 @@ public final class CarrierSettingsFragment extends SettingsBasePreferenceFragmen
                                     .getSimOperator();
                     startActivityForResult(
                             new Intent(Intent.ACTION_OPEN_DOCUMENT)
-                                    .setType("*/*")
+                                    .setType("application/octet-stream")
                                     .addCategory(Intent.CATEGORY_OPENABLE),
                             PICK_MBN);
                 });
