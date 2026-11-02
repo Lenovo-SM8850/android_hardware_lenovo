@@ -36,6 +36,7 @@ import java.util.concurrent.Executors
 class SettingsActivity : CollapsingToolbarBaseActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        ContentWidth.alignTitle(this, expandInLandscape = savedInstanceState == null)
         val frame = com.android.settingslib.collapsingtoolbar.R.id.content_frame
         if (supportFragmentManager.findFragmentById(frame) == null) {
             supportFragmentManager.beginTransaction().add(frame, SettingsFragment()).commit()
@@ -118,6 +119,7 @@ class SettingsFragment : SettingsBasePreferenceFragment() {
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
         val list = listView ?: return
+        ContentWidth.constrain(list)
         // The keyboard shrinks the list; keep the search field at the top while it is focused.
         list.addOnLayoutChangeListener { _, _, top, _, bottom, _, oldTop, _, oldBottom ->
             if (searchFocused && bottom - top != oldBottom - oldTop) revealSearch()
