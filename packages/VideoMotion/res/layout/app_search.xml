@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:layout_marginBottom="@dimen/settingslib_expressive_space_extrasmall4"
+    android:paddingStart="?android:attr/listPreferredItemPaddingStart"
+    android:paddingEnd="?android:attr/listPreferredItemPaddingEnd"
+    android:paddingBottom="@dimen/settingslib_expressive_space_extrasmall4">
+
+    <LinearLayout
+        android:id="@+id/searchbox_container"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:minHeight="56dp"
+        android:baselineAligned="false"
+        android:paddingStart="@dimen/settingslib_expressive_space_small4"
+        android:paddingEnd="@dimen/settingslib_expressive_space_extrasmall2"
+        android:paddingVertical="@dimen/settingslib_expressive_space_extrasmall2"
+        android:orientation="horizontal"
+        android:background="@drawable/settingslib_search_box_preference_background"
+        android:gravity="center">
+
+        <ImageView
+            android:id="@android:id/icon"
+            android:layout_width="@dimen/settingslib_expressive_space_small4"
+            android:layout_height="@dimen/settingslib_expressive_space_small4"
+            android:importantForAccessibility="no" />
+
+        <EditText
+            android:id="@+id/search_query"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:layout_marginStart="@dimen/settingslib_expressive_space_extrasmall4"
+            android:minHeight="@dimen/settingslib_expressive_space_small4"
+            android:autofillHints=""
+            android:background="@null"
+            android:hint="@string/search_apps"
+            android:imeOptions="actionSearch"
+            android:inputType="text"
+            android:maxLines="1"
+            android:textColor="@color/settingslib_materialColorOnSurfaceVariant"
+            android:textSize="18sp" />
+
+        <!-- 48dp touch target around the 24dp icon. -->
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/clear_button"
+            style="@style/Widget.Material3.Button.IconButton"
+            android:theme="@style/Theme.Material3.DynamicColors.DayNight"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:insetTop="0dp"
+            android:insetBottom="0dp"
+            android:padding="0dp"
+            android:contentDescription="@string/settingslib_clear_search_query"
+            app:icon="@drawable/settingslib_ic_cross"
+            app:iconGravity="textStart"
+            app:iconPadding="0dp"
+            app:iconSize="24dp"
+            app:iconTint="@color/settingslib_materialColorOnSurfaceVariant" />
+    </LinearLayout>
+</LinearLayout>

@@ -4,6 +4,7 @@ package io.github.miner7222.videomotion
 import android.content.Context
 import android.content.Intent
 import android.content.SharedPreferences
+import android.content.res.Configuration
 import android.graphics.drawable.Drawable
 import android.os.Bundle
 import android.os.Handler
@@ -11,12 +12,15 @@ import android.os.Looper
 import android.text.Editable
 import android.text.TextWatcher
 import android.view.View
+import android.view.ViewGroup
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
 import android.widget.EditText
 import androidx.preference.Preference
 import androidx.preference.PreferenceCategory
+import androidx.preference.PreferenceGroupAdapter
 import androidx.preference.PreferenceViewHolder
+import androidx.recyclerview.widget.LinearLayoutManager
 import com.android.settingslib.collapsingtoolbar.CollapsingToolbarBaseActivity
 import com.android.settingslib.widget.AppSwitchPreference
 import com.android.settingslib.widget.FooterPreference
@@ -25,6 +29,7 @@ import com.android.settingslib.widget.MainSwitchPreference
 import com.android.settingslib.widget.SettingsBasePreferenceFragment
 import com.android.settingslib.widget.category.R as CategoryR
 import com.android.settingslib.widget.preference.searchbox.R as SearchBoxR
+import com.android.settingslib.widget.theme.R as ThemeR
 import java.text.Collator
 import java.util.concurrent.Executors
 
@@ -46,6 +51,8 @@ class SettingsFragment : SettingsBasePreferenceFragment() {
     private lateinit var master: MainSwitchPreference
     private lateinit var appSearch: AppSearchPreference
     private lateinit var appGroup: PreferenceCategory
+    private lateinit var footer: FooterPreference
+    private var searchFocused = false
     private val loader = Executors.newSingleThreadExecutor()
     private val main = Handler(Looper.getMainLooper())
     private var generation = 0
@@ -84,6 +91,11 @@ class SettingsFragment : SettingsBasePreferenceFragment() {
                 onQueryChanged = {
                     this@SettingsFragment.query = it
                     filterApps()
+                    if (searchFocused) revealSearch()
+                }
+                onFocusChanged = {
+                    searchFocused = it
+                    if (it) revealSearch()
                 }
             }
         preferenceScreen.addPreference(appSearch)
@@ -94,13 +106,36 @@ class SettingsFragment : SettingsBasePreferenceFragment() {
                     CategoryR.layout.settingslib_expressive_untitled_preference_category
             }
         preferenceScreen.addPreference(appGroup)
-        updateAppAvailability()
-        preferenceScreen.addPreference(
+        footer =
             FooterPreference(context).apply {
                 title = listOf(R.string.limits, R.string.shared_uid, R.string.user_limit)
                     .joinToString("\n\n") { getString(it) }
             }
-        )
+        preferenceScreen.addPreference(footer)
+        updateAppAvailability()
+    }
+
+    override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
+        super.onViewCreated(view, savedInstanceState)
+        val list = listView ?: return
+        // The keyboard shrinks the list; keep the search field at the top while it is focused.
+        list.addOnLayoutChangeListener { _, _, top, _, bottom, _, oldTop, _, oldBottom ->
+            if (searchFocused && bottom - top != oldBottom - oldTop) revealSearch()
+        }
+    }
+
+    // In landscape the intro text and the switch would fill the space above the keyboard, so the
+    // search field is scrolled to the top and the large title is collapsed.
+    private fun revealSearch() {
+        if (resources.configuration.orientation != Configuration.ORIENTATION_LANDSCAPE) return
+        (activity as? CollapsingToolbarBaseActivity)?.appBarLayout?.setExpanded(false, true)
+        val list = listView ?: return
+        list.post {
+            val position = (list.adapter as? PreferenceGroupAdapter)?.getPreferenceAdapterPosition(appSearch)
+            if (position != null && position >= 0) {
+                (list.layoutManager as? LinearLayoutManager)?.scrollToPositionWithOffset(position, 0)
+            }
+        }
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
@@ -157,6 +192,8 @@ class SettingsFragment : SettingsBasePreferenceFragment() {
         val enabled = MotionController.isOwner() && MotionController.enabled()
         appSearch.isEnabled = enabled
         appGroup.isEnabled = enabled
+        // A search left in a disabled list would hide the other apps with no way to clear it.
+        if (!enabled) appSearch.clear()
     }
 
     private fun filterApps() {
@@ -172,7 +209,7 @@ class SettingsFragment : SettingsBasePreferenceFragment() {
                 .sortedByDescending { it.packageName in selected }
         for (app in matches) {
             appGroup.addPreference(
-                AppSwitchPreference(requireContext()).apply {
+                AppRowPreference(requireContext()).apply {
                     key = app.packageName
                     title = app.label
                     icon = app.icon
@@ -187,12 +224,11 @@ class SettingsFragment : SettingsBasePreferenceFragment() {
         }
         if (matches.isEmpty()) {
             appGroup.addPreference(
-                Preference(requireContext()).apply {
-                    setTitle(R.string.no_apps)
-                    isSelectable = false
-                }
+                EmptyPreference(requireContext()).apply { setTitle(R.string.no_apps) }
             )
         }
+        // The notes stay for an empty list that is not a search result, such as a non-admin user.
+        footer.isVisible = matches.isNotEmpty() || apps.isEmpty()
     }
 
     private fun updateChecks() {
@@ -208,13 +244,14 @@ class SettingsFragment : SettingsBasePreferenceFragment() {
 private const val STATE_QUERY = "query"
 
 /**
- * Search field that lives in the preference list, so it scrolls with the apps it filters. It uses
- * the SettingsLib expressive search box layout, which SearchBoxPreference itself only reports on
- * the IME search action; this one reports every text change.
+ * Search field that lives in the preference list, so it scrolls with the apps it filters. It looks
+ * like the SettingsLib expressive search box, which SearchBoxPreference itself only reports on the
+ * IME search action; this one reports every text change and has a 48dp clear button.
  */
 private class AppSearchPreference(context: Context) :
     Preference(context), GroupSectionDividerMixin {
     var onQueryChanged: ((String) -> Unit)? = null
+    var onFocusChanged: ((Boolean) -> Unit)? = null
     private var query = ""
     private var editText: EditText? = null
     private val watcher =
@@ -235,7 +272,7 @@ private class AppSearchPreference(context: Context) :
     private var clearButton: View? = null
 
     init {
-        layoutResource = SearchBoxR.layout.settingslib_expressive_preference_searchbox
+        layoutResource = R.layout.app_search
         setIcon(SearchBoxR.drawable.settingslib_expressive_searchbox_search_icon_24dp)
         isSelectable = false
         isPersistent = false
@@ -245,6 +282,18 @@ private class AppSearchPreference(context: Context) :
         query = value
     }
 
+    /** Empties the field and reports it like typing would. */
+    fun clear() {
+        if (query.isEmpty()) return
+        val edit = editText
+        if (edit != null) {
+            edit.setText("")
+        } else {
+            query = ""
+            onQueryChanged?.invoke("")
+        }
+    }
+
     private fun updateClear(text: CharSequence?) {
         clearButton?.visibility = if (text.isNullOrEmpty()) View.GONE else View.VISIBLE
     }
@@ -252,17 +301,17 @@ private class AppSearchPreference(context: Context) :
     override fun onBindViewHolder(holder: PreferenceViewHolder) {
         super.onBindViewHolder(holder)
         editText?.removeTextChangedListener(watcher)
-        val edit = holder.findViewById(SearchBoxR.id.search_query) as EditText
+        val edit = holder.findViewById(R.id.search_query) as EditText
         editText = edit
-        clearButton = holder.findViewById(SearchBoxR.id.clear_button)
-        edit.setHint(R.string.search_apps)
+        clearButton = holder.findViewById(R.id.clear_button)
         if (edit.text.toString() != query) edit.setText(query)
         updateClear(query)
-        holder.findViewById(SearchBoxR.id.searchbox_container)?.setOnClickListener {
+        holder.findViewById(R.id.searchbox_container)?.setOnClickListener {
             edit.requestFocus()
             context.getSystemService(InputMethodManager::class.java)?.showSoftInput(edit, 0)
         }
         clearButton?.setOnClickListener { edit.setText("") }
+        edit.setOnFocusChangeListener { _, focused -> onFocusChanged?.invoke(focused) }
         edit.setOnEditorActionListener { view, actionId, _ ->
             if (actionId == EditorInfo.IME_ACTION_SEARCH) {
                 context
@@ -274,5 +323,33 @@ private class AppSearchPreference(context: Context) :
             }
         }
         edit.addTextChangedListener(watcher)
+    }
+}
+
+/** An app row that follows the app list spec: 64dp tall, 16dp icon gap. */
+private class AppRowPreference(context: Context) : AppSwitchPreference(context) {
+    override fun onBindViewHolder(holder: PreferenceViewHolder) {
+        super.onBindViewHolder(holder)
+        val density = context.resources.displayMetrics.density
+        val height = Math.round(ROW_HEIGHT_DP * density)
+        // The root and its first child both carry the 72dp minimum of the expressive row layout.
+        holder.itemView.minimumHeight = height
+        (holder.itemView as? ViewGroup)?.getChildAt(0)?.minimumHeight = height
+        (holder.findViewById(ThemeR.id.icon_frame)?.layoutParams as? ViewGroup.MarginLayoutParams)?.marginEnd =
+            Math.round(ICON_GAP_DP * density)
+    }
+
+    private companion object {
+        const val ROW_HEIGHT_DP = 64
+        const val ICON_GAP_DP = 16
+    }
+}
+
+/** Centred note for an empty list. It is a divider, so it draws without a card behind it. */
+private class EmptyPreference(context: Context) : Preference(context), GroupSectionDividerMixin {
+    init {
+        layoutResource = R.layout.app_empty
+        isSelectable = false
+        isPersistent = false
     }
 }
