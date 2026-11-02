@@ -226,7 +226,9 @@ bool normalize(const Policy& policy, TuningRecord& r, std::string* error) {
         if (r.pendingProbe) {
             const auto& probe = *r.pendingProbe;
             if (probe.resource < -1 || probe.resource > 2 || probe.deltaSteps < -10 || probe.deltaSteps > 10 ||
-                probe.armedAtEpochMs < 0 || (!probe.baseline.empty() && !validRecordId(probe.baseline)))
+                probe.armedAtEpochMs < 0 || probe.baselineRevision < 0 || probe.analysisVersion < 0 || probe.analysisTargetFps < 0 || !std::isfinite(probe.renderScale) || !std::isfinite(probe.refreshRate) ||
+                (probe.renderScale != -1 && (probe.renderScale <= 0 || probe.renderScale > 1)) ||
+                (probe.refreshRate != -1 && probe.refreshRate <= 0) || probe.diagnosis < 0 || probe.diagnosis > 6 || (!probe.baseline.empty() && !validRecordId(probe.baseline)))
                 return fail(error, "Invalid pending probe");
         }
         return true;
@@ -508,6 +510,11 @@ void writeRecord(tinyxml2::XMLDocument& doc, tinyxml2::XMLElement* parent, const
         e->SetAttribute("probeDelta", r.pendingProbe->deltaSteps);
         e->SetAttribute("probeBase", r.pendingProbe->baseline.c_str());
         e->SetAttribute("probeSince", r.pendingProbe->armedAtEpochMs);
+        e->SetAttribute("probeRevision", r.pendingProbe->baselineRevision);
+        e->SetAttribute("probeTarget", r.pendingProbe->analysisTargetFps);
+        e->SetAttribute("probeDiagnosis", r.pendingProbe->diagnosis);
+        e->SetAttribute("probeAnalysisVersion", r.pendingProbe->analysisVersion);
+        e->SetAttribute("probeScale", r.pendingProbe->renderScale); e->SetAttribute("probeRefresh", r.pendingProbe->refreshRate);
     }
     for (const auto& step : r.steps) {
         auto s = doc.NewElement("step");
@@ -581,6 +588,12 @@ TuningRecord readRecord(const tinyxml2::XMLElement* e) {
     r.variantName = textAttr(e, "variantName");
     if (e->Attribute("probeResource")) {
         r.pendingProbe = ProbeRec{intAttr(e, "probeResource", -1), intAttr(e, "probeDelta", 0), textAttr(e, "probeBase")};
+        e->QueryInt64Attribute("probeRevision", &r.pendingProbe->baselineRevision);
+        r.pendingProbe->analysisTargetFps = intAttr(e, "probeTarget", 0);
+        r.pendingProbe->diagnosis = intAttr(e, "probeDiagnosis", 0);
+        r.pendingProbe->analysisVersion = intAttr(e, "probeAnalysisVersion", 0);
+        r.pendingProbe->renderScale = e->FloatAttribute("probeScale", -1);
+        r.pendingProbe->refreshRate = e->FloatAttribute("probeRefresh", -1);
         if (e->Attribute("probeSince") && e->QueryInt64Attribute("probeSince", &r.pendingProbe->armedAtEpochMs) != tinyxml2::XML_SUCCESS)
             throw std::runtime_error("Invalid pending probe");
     }
@@ -752,6 +765,12 @@ void TuningStore::load(const Policy& policy) {
                 s.dTail95 = doubleAttr(e, "dTail95");
                 s.dPowerMw = doubleAttr(e, "dPower");
                 s.dSkinPeakC = doubleAttr(e, "dSkin");
+                s.baselineId = textAttr(e, "baseline"); s.resultId = textAttr(e, "result");
+                e->QueryInt64Attribute("baselineRevision", &s.baselineRevision);
+                e->QueryInt64Attribute("resultRevision", &s.resultRevision);
+                s.analysisTargetFps = intAttr(e, "target", 0); s.diagnosis = intAttr(e, "diagnosis", 0);
+                s.analysisVersion = intAttr(e, "analysisVersion", 0);
+                s.renderScale = e->FloatAttribute("scale", -1); s.refreshRate = e->FloatAttribute("refresh", -1);
                 if (!validPackage(s.package) || s.mode < 1 || s.mode > 3 || s.resource < -1 || s.resource > 2 ||
                     s.deltaSteps < -10 || s.deltaSteps > 10) throw std::runtime_error("Invalid entry");
                 list.push_back(s);
@@ -816,6 +835,11 @@ bool TuningStore::saveSensitivity(int user, const UserData& data, std::string* e
         e->SetAttribute("dTail95", number(s.dTail95).c_str());
         e->SetAttribute("dPower", number(s.dPowerMw).c_str());
         e->SetAttribute("dSkin", number(s.dSkinPeakC).c_str());
+        e->SetAttribute("baseline", s.baselineId.c_str()); e->SetAttribute("result", s.resultId.c_str());
+        e->SetAttribute("baselineRevision", s.baselineRevision); e->SetAttribute("resultRevision", s.resultRevision);
+        e->SetAttribute("target", s.analysisTargetFps); e->SetAttribute("diagnosis", s.diagnosis);
+        e->SetAttribute("analysisVersion", s.analysisVersion);
+        e->SetAttribute("scale", s.renderScale); e->SetAttribute("refresh", s.refreshRate);
         root->InsertEndChild(e);
     }
     tinyxml2::XMLPrinter printer;
@@ -900,7 +924,10 @@ bool TuningStore::addSensitivity(int user, const SensitivityEntry& entry, std::s
     try {
         if (!validPackage(entry.package) || entry.mode < 1 || entry.mode > 3 || entry.resource < -1 || entry.resource > 2 ||
             entry.deltaSteps < -10 || entry.deltaSteps > 10 || !std::isfinite(entry.dFloor5) || !std::isfinite(entry.dTail95) ||
-            !std::isfinite(entry.dPowerMw) || !std::isfinite(entry.dSkinPeakC))
+            !std::isfinite(entry.dPowerMw) || !std::isfinite(entry.dSkinPeakC) ||
+            !std::isfinite(entry.renderScale) || !std::isfinite(entry.refreshRate) ||
+            (entry.renderScale != -1 && (entry.renderScale <= 0 || entry.renderScale > 1)) ||
+            (entry.refreshRate != -1 && entry.refreshRate <= 0))
             return fail(error, "Invalid sensitivity entry");
         UserData next = mUsers.count(user) ? mUsers.at(user) : UserData{};
         next.sensitivity.push_back(entry);
@@ -915,6 +942,25 @@ bool TuningStore::addSensitivity(int user, const SensitivityEntry& entry, std::s
         mUsers[user].sensitivity = std::move(next.sensitivity);
         return true;
     } catch (const std::exception& e) { return fail(error, e.what()); }
+}
+
+bool TuningStore::invalidateEvidence(int user, const std::string& pkg, int mode, const std::string& id, std::string* error) {
+    auto next = mUsers[user];
+    auto& entries = next.sensitivity;
+    entries.erase(std::remove_if(entries.begin(), entries.end(), [&](const SensitivityEntry& e) {
+        return e.package == pkg && e.mode == mode && (e.baselineId.empty() || e.resultId.empty() ||
+            e.baselineId == id || e.resultId == id);
+    }), entries.end());
+    // Invalidate derived evidence before publishing the new range. A crash can only lose evidence.
+    if (!saveSensitivity(user, next, error)) return false;
+    mUsers[user].sensitivity = next.sensitivity;
+    auto it = next.tunings.find({pkg, mode});
+    if (it != next.tunings.end() && it->second.pendingProbe && it->second.pendingProbe->baseline == id) {
+        it->second.pendingProbe.reset();
+        if (!save(user, next, error)) return false;
+        mUsers[user] = std::move(next);
+    }
+    return true;
 }
 
 std::vector<SensitivityEntry> TuningStore::sensitivity(int user, const std::string& pkg, int mode) const {

@@ -741,6 +741,168 @@ void signatureEvidence(const World& w) {
     budget.powerTargetMw = 2000;
     require(rank(budget)[0].score >= without + 10000, "Heuristic recommendation consumes power budget");
 }
+void capAnalysis(const World& w) {
+    auto capped = [&](int n, int desired) {
+        Spec spec; spec.fps = {static_cast<float>(n)}; spec.cur = {100000, 100000, 100000000};
+        auto v = make(spec);
+        for (auto& s : v) {
+            s.renderScale = 1; s.refreshRate = 120; s.selectedGameplay = true; s.desiredTargetFps = desired; s.requestedFps = static_cast<float>(n); s.throttleFps = desired;
+            s.maxFrameTimeUs = 1000000 / n; s.cpuUtilPermille = {200, 200}; s.gpuBusyPercent = 30;
+        }
+        return v;
+    };
+    for (auto [n, desired] : {std::pair{60,120}, std::pair{45,90}, std::pair{40,90}}) {
+        auto v = capped(n, desired);
+        auto cause = classify(v);
+        require(cause.diagnosis == kGameCap && cause.confirmed && cause.ceilingFps == n && cause.analysisTargetFps == n,
+                "Explicit game cap with N-based budget");
+        auto q = tuningSummary(v, w.ladders);
+        auto demand = wanted(v, summarize(v, w.ladders), w.recorded, w.ladders, kGoalBalanced);
+        require(q.hitRate == 1 && q.tail95 <= .01 && !(demand.reasons & kFpsShort), "No cap-driven shortfall");
+        require(std::none_of(demand.want.begin(), demand.want.end(), [](int x) { return x > 0; }), "No cap-driven raises");
+        Proposal proposal; int error = 0;
+        require(autoTune(w.policy, v, w.recorded, w.current, kGoalBalanced, {}, &proposal, &error), "Cap auto analysis");
+        require(!proposal.changes.empty() && proposal.changes.front().after < proposal.changes.front().before,
+                "N-based quality margin with measured headroom permits one conservative reduction");
+        for (const auto& c : proposal.changes) require(c.after <= c.before, "Capped-only deficit cannot raise hardware");
+    }
+    auto baseline = summarize(capped(60,120), w.ladders);
+    auto changedDisplay = summarize(capped(60,90), w.ladders);
+    require(compatibleProbe(baseline, baseline) && !compatibleProbe(baseline, changedDisplay),
+            "Combined FPS/hardware changes cannot produce single-resource sensitivity");
+    auto v = capped(60, 120);
+    for (auto& s : v) { s.requestedFps = -1; s.selectedGameplay = true; }
+    require(classify(v).diagnosis == kLikelyGameCap && !classify(v).confirmed, "Inferred cap remains uncertain");
+    for (auto& s : v) s.selectedGameplay = false;
+    require(classify(v).diagnosis == kUnclear, "Menu plateau without gameplay provenance is unclear");
+    for (auto& s : v) { s.selectedGameplay = true; s.gpuBusyPercent = -1; }
+    require(classify(v).diagnosis == kUnclear, "Missing sensors cannot establish headroom");
+    v = capped(60,120);
+    for (auto& s : v) s.selectedGameplay = false;
+    require(classify(v).diagnosis == kUnclear && !classify(v).confirmed, "An explicit menu vote still needs gameplay provenance");
+    v = capped(60,120);
+    for (size_t i = 0; i < v.size(); ++i) { v[i].requestedFps = -1; if (i % 10 == 0) v[i].gpuBusyPercent = 99; }
+    require(classify(v).diagnosis == kUnclear, "Q95 headroom rejects busy spikes despite a low average");
+    v = capped(45,90);
+    for (auto& s : v) { s.requestedFps = -1; s.throttleFps = 45; }
+    require(classify(v).diagnosis == kFpsLimited && !classify(v).confirmed, "Lower throttle is FPS limited");
+    v = capped(60,120);
+    for (auto& s : v) { s.fps = 59.8f; s.fpsMin = 59; s.requestedFps = 59.94f; }
+    require(classify(v).confirmed && classify(v).ceilingFps == 60, "Noisy near-60 cadence normalizes before supported-step rounding");
+    v = capped(60,120); v.resize(60);
+    require(!classify(v).confirmed, "Startup-filtered short record has insufficient cap duration");
+    v = capped(60,120);
+    for (auto& s : v) { s.fps = s.fpsMin = 40; s.maxFrameTimeUs = 40000; s.gpuBusyPercent = 99; }
+    auto cause = classify(v);
+    require(cause.confirmed && cause.analysisTargetFps == 60 && cause.diagnosis == kPerformanceLimited,
+            "Residual deficit below explicit cap remains performance limited");
+    Proposal residual; int residualError = 0;
+    require(autoTune(w.policy, v, w.recorded, w.current, kGoalBalanced, {}, &residual, &residualError) &&
+            !residual.changes.empty() && residual.changes.front().after > residual.changes.front().before,
+            "Genuine deficit below N remains eligible for a hardware raise");
+    for (auto& s : v) s.band = 1;
+    require(classify(v).diagnosis == kThermalLimit, "Thermal needs saturation and shortfall");
+    for (auto& s : v) { s.gpuBusyPercent = 20; s.cpuUtilPermille = {100,100}; }
+    require(classify(v).diagnosis == kUnclear, "Heat/low cluster average alone proves no bottleneck");
+    v = capped(60,120);
+    for (size_t i=150; i<v.size(); ++i) { v[i].requestedFps = 45; v[i].fps = 45; v[i].fpsMin = 44; v[i].maxFrameTimeUs = 23000; v[i].sceneId=2; }
+    require(!classify(v).confirmed, "Different scene plateaus cannot form one actionable cap");
+    v.erase(v.begin()+150, v.end());
+    require(classify(v).confirmed && classify(v).ceilingFps == 60, "Kept range excludes conflicting scene");
+    for (auto& s : v) s.desiredTargetFps = -1;
+    require(classify(v).diagnosis == kUnclear, "No current display fallback for historical intent");
+    std::cout << "ANALYSIS_GAME_CAP_PASS explicit inferred residual thermal scene duration unknown\n";
+}
+void reviewRegressions(const World& w) {
+    auto samples = [&]() {
+        Spec spec; spec.fps = {60}; spec.cur = {100000, 100000, 100000000};
+        auto result = make(spec, 420);
+        for (auto& s : result) {
+            s.selectedGameplay = true; s.desiredTargetFps = 120; s.requestedFps = 60; s.throttleFps = 120;
+            s.maxFrameTimeUs = 17000; s.cpuUtilPermille = {200,200}; s.gpuBusyPercent = 30;
+            s.renderScale = .85f; s.refreshRate = 120;
+        }
+        return result;
+    };
+    auto v = samples();
+    for (size_t i=180; i<v.size(); ++i) {
+        v[i].fps = 120; v[i].fpsMin = 119; v[i].requestedFps = -1; v[i].throttleFps = -1;
+        v[i].maxFrameTimeUs = 8400; v[i].sceneId = 2;
+    }
+    auto cause = classify(v);
+    require(!cause.confirmed && cause.ceilingFps == 0 && !cause.segments.empty(), "Faster successful gameplay vetoes global cap");
+    require(cause.segments.front().targetFps == 60 && cause.segments.front().endMs < v[180].timeMs,
+            "Only supporting capped interval is retargetable");
+    const auto mixed = tuningSummary(v, w.ladders);
+    require(mixed.targetFps == 120 && mixed.hitRate > .99, "Unsignalled successful 120 gameplay keeps its own target");
+    std::cout << "F2_SEGMENT_CAP_PASS faster-gameplay global-veto segment-only-targets\n";
+
+    for (bool missing : {false, true}) {
+        v = samples();
+        for (auto& s : v) {
+            s.fps = s.fpsMin = 40; s.maxFrameTimeUs = 40000;
+            s.gpuBusyPercent = missing ? -1 : 20; s.cpuUtilPermille = missing ? std::array<int,2>{-1,-1} : std::array<int,2>{100,100};
+        }
+        cause = classify(v);
+        require(cause.diagnosis == kUnclear && !cause.confirmed && cause.ceilingFps == 0 && cause.segments.empty(),
+                "Unqualified app vote cannot be an actionable confirmed cap");
+    }
+    v = samples();
+    for (auto& s : v) { s.fps = s.fpsMin = 40; s.maxFrameTimeUs = 40000; s.gpuBusyPercent = 99; }
+    require(classify(v).confirmed && classify(v).diagnosis == kPerformanceLimited, "Supported residual deficit still qualifies");
+    std::cout << "F3_ACTIONABLE_CAP_PASS missing-low-util unclear-vote residual-saturation\n";
+
+    v = samples();
+    for (auto& s : v) { s.requestedFps = s.throttleFps = -1; }
+    require(classify(v).diagnosis == kLikelyGameCap, "Unsignalled inferred plateau fixture");
+    for (int goal : {kGoalFrames, kGoalBalanced, kGoalEfficiency}) {
+        auto demand = wanted(v, summarize(v, w.ladders), w.recorded, w.ladders, goal);
+        require(!(demand.reasons & (kTargetMet | kOverprovisioned)) && (demand.reasons & kFpsShort),
+                "Inferred cadence cannot claim desired target met or excess capacity");
+        require(std::all_of(demand.want.begin(), demand.want.end(), [](int d) { return d == 0; }),
+                "Inference-derived raises and reductions suppressed");
+        const auto proposal = tune(w, v, w.current, goal);
+        require(proposal.changes.empty(), "Inferred plateau cannot authorize an efficiency reduction");
+    }
+    auto limited = w.current; limited.powerTargetMw = 2000;
+    const auto safety = tune(w, v, limited, kGoalEfficiency);
+    require(!safety.changes.empty() && safety.changes.front().after < safety.changes.front().before,
+            "Independent power safety still permits reductions");
+    for (auto& s : v) s.skinMilliC = 43000;
+    const auto hotSafety = tune(w, v, w.current, kGoalEfficiency);
+    require(!hotSafety.changes.empty() && hotSafety.changes.front().after < hotSafety.changes.front().before,
+            "Independent thermal safety still permits reductions");
+    std::cout << "F4_INFERRED_ADVICE_PASS no-target-met no-efficiency-reduction power-thermal-safety\n";
+
+    Candidate lower; lower.profileKey = "unsafe-lower"; lower.profile = w.recorded;
+    for (auto& step : lower.profile.steps) { step.units[2].ceiling = w.ladders[2].front(); step.units[2].floor = -1; }
+    Candidate hotter; hotter.profileKey = "unsafe-hotter"; hotter.profile = w.recorded; hotter.profile.thermalCase += 100;
+    auto rank = [&](const std::vector<Sample>& input, const std::vector<Candidate>& candidates) {
+        int reasons = 0, error = 0;
+        auto result = recommend(input, w.recorded, candidates, w.ladders, kGoalEfficiency, &reasons, &error);
+        require(error == kOk, "Recommendation fixture eligible");
+        return result;
+    };
+    v = samples();
+    for (auto& s : v) { s.cpuUtilPermille = {-1,-1}; s.gpuBusyPercent = -1; }
+    require(classify(v).confirmed && rank(v, {lower}).empty(), "Confirmed cap without measured headroom rejects reductions");
+    v = samples();
+    require(!rank(v, {lower}).empty(), "Confirmed cap with measured N-based margin permits lower candidate");
+    for (auto& s : v) { s.requestedFps = s.throttleFps = -1; }
+    require(rank(v, {lower, hotter}).empty(), "Inferred desired-target shortfall cannot authorize lower caps or higher heat limits");
+    std::cout << "F5_CANDIDATE_SAFETY_PASS headroom-gate inferred-thermal-gate safe-reduction\n";
+
+    const auto baseline = summarize(samples(), w.ladders);
+    auto changed = samples();
+    for (auto& s : changed) s.renderScale = 1;
+    require(!compatibleProbe(baseline, summarize(changed, w.ladders)), "Resolution-only edit is not hardware sensitivity");
+    changed = samples(); for (auto& s : changed) s.refreshRate = 90;
+    require(!compatibleProbe(baseline, summarize(changed, w.ladders)), "Refresh-only edit is not hardware sensitivity");
+    changed = samples(); for (auto& s : changed) { s.renderScale = s.refreshRate = -1; }
+    require(!compatibleProbe(baseline, summarize(changed, w.ladders)) && compatibleProbe(baseline, baseline),
+            "Unknown provenance is rejected; unchanged display remains comparable");
+    std::cout << "F6_PROBE_DISPLAY_PASS resolution refresh unknown unchanged\n";
+}
 } // namespace
 
 void analysisTests(const char* baldurXml, const char* baldurOverlay) {
@@ -770,5 +932,7 @@ void analysisTests(const char* baldurXml, const char* baldurOverlay) {
     proposalCache(w);
     selectionGenerations(w);
     signatureEvidence(w);
+    capAnalysis(w);
+    reviewRegressions(w);
     std::cout << "analysis tests passed\n";
 }

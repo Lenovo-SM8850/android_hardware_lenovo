@@ -77,4 +77,19 @@ interface IGameTuning {
     TuningProposal autoTune(int userId, String id, int goal);
     void registerSessionListener(in ISessionListener listener);
     void unregisterSessionListener(in ISessionListener listener);
+    // Inclusive original-time range. (0, originalDurationMs) resets to full.
+    RecordingInfo setRecordingRange(int userId, String id, int startMs, int endMs, long expectedRevision);
+    RecordingSample[] getEffectiveRecordingSamples(int userId, String id, int offset, long expectedRevision);
+    RecordingSample[] getRawRecordingSamples(int userId, String id, int offset, long expectedRevision);
+    // The app captures actual chosen display values before recording; unknown values stay -1.
+    void setRecordingContext(int userId, String packageName, int desiredFps, float renderScale, float refreshRate);
+    // Display changes invalidate single-resource probe attribution.
+    void invalidateDisplayProbe(int userId, String packageName, int mode);
+    const int DIAGNOSIS_UNCLEAR = 0;
+    const int DIAGNOSIS_GAME_CAP = 1;
+    const int DIAGNOSIS_LIKELY_GAME_CAP = 2;
+    const int DIAGNOSIS_FPS_LIMITED = 3;
+    const int DIAGNOSIS_PERFORMANCE_LIMITED = 4;
+    const int DIAGNOSIS_THERMAL_LIMITED = 5;
+    const int DIAGNOSIS_MIXED_LIMITS = 6;
 }

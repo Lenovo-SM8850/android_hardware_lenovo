@@ -30,4 +30,9 @@ parcelable RecordingInfo {
   int endReason;
   vendor.lenovo.hardware.gametuning.PolicyProfile profile;
   vendor.lenovo.hardware.gametuning.RecordingSummary summary;
+  int originalDurationMs;
+  int originalSampleCount;
+  int keepStartMs;
+  int keepEndMs;
+  long rangeRevision;
 }

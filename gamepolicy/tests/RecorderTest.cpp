@@ -13,6 +13,30 @@
 #include <stdexcept>
 #include <sys/stat.h>
 #include <sys/resource.h>
+#ifdef GAMEPOLICY_IO_FAULT_TEST
+#include <cstdarg>
+#include <cerrno>
+#include <fcntl.h>
+namespace {
+bool failDirectoryOpen = false, failDirectorySync = false;
+}
+extern "C" int __real_open(const char*, int, ...);
+extern "C" int __real_fsync(int);
+extern "C" int __wrap_open(const char* path, int flags, ...) {
+    if (failDirectoryOpen && (flags & O_DIRECTORY)) { errno = EIO; return -1; }
+    if (flags & O_CREAT) {
+        va_list args; va_start(args, flags);
+        const mode_t mode = va_arg(args, int); va_end(args);
+        return __real_open(path, flags, mode);
+    }
+    return __real_open(path, flags);
+}
+extern "C" int __wrap_fsync(int fd) {
+    struct stat st;
+    if (failDirectorySync && ::fstat(fd, &st) == 0 && S_ISDIR(st.st_mode)) { errno = EIO; return -1; }
+    return __real_fsync(fd);
+}
+#endif
 
 using namespace gamepolicy;
 namespace {
@@ -503,6 +527,71 @@ void resumeConfiguration(const fs::path& root) {
     std::cout << "RECORDER_RESUME_CONFIG_OK unchanged-clean changed-mixed\n";
 }
 
+void keepRanges(const fs::path& root) {
+    Recorder r(root.string());
+    startSession(r, 0, kGame, 0, kEpoch);
+    Feeder f(r, 0); f.feed(150); r.finish(kLadders);
+    auto h = r.list(0, "").front();
+    const auto id = h.id;
+    require(h.originalDurationMs == 150000 && h.keepEndMs == 150000 && h.rangeRevision == 0, "Legacy full bounds");
+    require(r.keepRange(0, id, 20500, 120500, 0, kLadders, &h) == 0, "Keep range");
+    require(h.keepStartMs == 21000 && h.keepEndMs == 120000 && h.durationMs == 99000 &&
+            h.sampleCount == 100 && h.summary.validSamples == 100 && h.rangeRevision == 1, "Inclusive normalized range");
+    std::vector<Sample> selected, raw;
+    require(r.read(0, id, &selected) && r.raw(0, id, &raw) && raw.size() == 150 && selected.size() == 100 &&
+            selected.front().timeMs == 21000 && selected.front().selectedGameplay, "Raw retained, original validity and gameplay provenance");
+    require(r.keepRange(0, id, 0, 150000, 0, kLadders, &h) == 3, "Stale edit rejected");
+    require(r.keepRange(0, id, 0, 9000, 1, kLadders, &h) == 2, "No usable selection rejected");
+    require(r.keepRange(0, id, -1, 10000, 1, kLadders, &h) == 2 &&
+            r.keepRange(0, id, 50000, 20000, 1, kLadders, &h) == 2 &&
+            r.keepRange(1, id, 0, 150000, 1, kLadders, &h) == 1, "Invalid bounds/user");
+    Recorder restarted(root.string()); restarted.recover(kLadders);
+    require(restarted.header(0, id, &h) && h.rangeRevision == 1 && h.summary.validSamples == 100, "Range survives recovery");
+    require(restarted.keepRange(0, id, 0, 150000, 1, kLadders, &h) == 0 && h.rangeRevision == 2 && h.sampleCount == 150,
+            "Reset retains raw rows and advances revision");
+    require(restarted.keepRange(0, id, 0, 150000, 2, kLadders, &h) == 0 && h.rangeRevision == 2, "Unchanged range is no-op");
+    require(restarted.raw(0, id, &raw) && sameSample(raw[20], f.expected[20]), "Mutation never rewrites raw values");
+    require(::chmod((root / "u0").c_str(), 0500) == 0, "Make range storage read-only");
+    require(restarted.keepRange(0, id, 30000, 60000, 2, kLadders, &h) == 4, "Storage failure rejected");
+    require(::chmod((root / "u0").c_str(), 0700) == 0, "Restore range storage");
+    require(restarted.header(0, id, &h) && h.rangeRevision == 2 && h.sampleCount == 150, "Failed mutation retains previous full view");
+#ifdef GAMEPOLICY_IO_FAULT_TEST
+    for (bool openFailure : {true, false}) {
+        const int64_t previous = h.rangeRevision;
+        failDirectoryOpen = openFailure; failDirectorySync = !openFailure;
+        require(restarted.keepRange(0, id, 30000, openFailure ? 60000 : 70000, previous, kLadders, &h) == 5,
+                "Post-rename directory failure must not report success");
+        require(h.rangeRevision == previous + 1 && h.keepStartMs == 30000, "Published revision reconciled after durability failure");
+        RecordHeader visible;
+        require(restarted.header(0, id, &visible) && visible.rangeRevision == h.rangeRevision &&
+                visible.keepEndMs == h.keepEndMs, "Failed sync leaves a complete visible range");
+        require(restarted.keepRange(0, id, 0, 150000, previous, kLadders, &visible) == 3,
+                "Old revision rejected after published failure");
+        require(restarted.keepRange(0, id, h.keepStartMs, h.keepEndMs, h.rangeRevision, kLadders, &visible) == 5,
+                "No-op cannot hide an ongoing durability failure");
+        failDirectoryOpen = failDirectorySync = false;
+        require(restarted.keepRange(0, id, h.keepStartMs, h.keepEndMs, h.rangeRevision, kLadders, &visible) == 0 &&
+                visible.rangeRevision == h.rangeRevision, "Retry sync completes durability without another revision");
+    }
+    std::cout << "F7_DIRECTORY_DURABILITY_PASS open fsync published-revision stale no-op retry\n";
+#endif
+    Recorder mixed((root / "mixed").string());
+    startSession(mixed, 0, kGame, 0, kEpoch);
+    for (int i = 1; i <= 150; ++i) {
+        Sample sample; sample.flags = kFlagReady; sample.mode = 1; sample.profileGeneration = i <= 75 ? 1 : 2;
+        sample.renderScale = .85f; sample.refreshRate = 120;
+        mixed.frame(60, 0, 60); mixed.sample(sample, i * 1000);
+    }
+    mixed.finish(kLadders);
+    auto originalMixed = mixed.list(0, "").front();
+    require(originalMixed.summary.renderScale == .85f && originalMixed.summary.refreshRate == 120,
+            "Full-view header preserves recorded display provenance");
+    require(mixed.keepRange(0, originalMixed.id, 10000, 70000, 0, kLadders, &h) == 0 && h.summary.mixed,
+            "Selected single generation cannot rescue original mixed provenance");
+    require(h.summary.renderScale == .85f && h.summary.refreshRate == 120, "Effective header preserves display provenance");
+    std::cout << "RECORDER_KEEP_RANGE_PASS revision reset raw stale bounds restart atomic-failure mixed\n";
+}
+
 void invalidStart(const fs::path& root) {
     Recorder r(root.string());
     r.start(0, "bad/package", 1, 1, 1, profile(), 0, kEpoch);
@@ -540,5 +629,6 @@ void recorderTests(const char* tempDir) {
     oldFormat(root / "old");
     resumeConfiguration(root / "resume-configuration");
     invalidStart(root / "invalid");
+    keepRanges(root / "keep");
     std::cout << "recorder tests passed\n";
 }

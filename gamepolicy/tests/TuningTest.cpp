@@ -854,6 +854,42 @@ void synthetic(const fs::path& temp) {
     std::cout << "TUNING_SYNTHETIC_OK sources=" << policy.sources.size() << " diagnostics=" << policy.diagnostics.size() << '\n';
 }
 
+void rangeProvenance(const Policy& policy, const fs::path& temp) {
+    const auto dir = temp / "range-provenance";
+    fs::create_directories(dir);
+    TuningStore store(dir.string()); store.load(policy);
+    auto tuning = fullRecord(policy);
+    tuning.pendingProbe = ProbeRec{2, -1, "100_com.example.full", 1234, 7, 60, 1, 2, .85f, 120};
+    std::string error;
+    require(store.put(0, tuning, &error), error);
+    SensitivityEntry e;
+    e.package = tuning.package; e.mode = tuning.mode; e.resource = 2; e.deltaSteps = -1;
+    e.baselineId = "100_com.example.full"; e.resultId = "200_com.example.full";
+    e.baselineRevision = 7; e.resultRevision = 2; e.analysisTargetFps = 60; e.diagnosis = 1; e.analysisVersion = 2;
+    e.renderScale = .85f; e.refreshRate = 120;
+    require(store.addSensitivity(0, e, &error), error);
+    TuningStore reload(dir.string()); reload.load(policy);
+    require(reload.find(0, tuning.package, tuning.mode)->pendingProbe->baselineRevision == 7 &&
+            reload.sensitivity(0, tuning.package, tuning.mode).back().resultRevision == 2, "Provenance round trip");
+    const auto probe = *reload.find(0, tuning.package, tuning.mode)->pendingProbe;
+    const auto evidence = reload.sensitivity(0, tuning.package, tuning.mode).back();
+    require(probe.renderScale == .85f && probe.refreshRate == 120 && probe.analysisVersion == 2 &&
+            evidence.renderScale == .85f && evidence.refreshRate == 120 && evidence.analysisVersion == 2,
+            "Scale/refresh provenance persists through probe and history reload");
+    std::cout << "F6_PROVENANCE_STORAGE_PASS probe history scale refresh version\n";
+    require(reload.invalidateEvidence(0, tuning.package, tuning.mode, e.resultId, &error), error);
+    require(reload.sensitivity(0, tuning.package, tuning.mode).empty(), "Editing result invalidates sensitivity");
+    e.baselineId.clear(); e.resultId.clear();
+    require(reload.addSensitivity(0, e, &error), error);
+    require(reload.invalidateEvidence(0, tuning.package, tuning.mode, "100_com.example.full", &error), error);
+    require(!reload.find(0, tuning.package, tuning.mode)->pendingProbe &&
+            reload.sensitivity(0, tuning.package, tuning.mode).empty(), "Baseline edit cancels probe and legacy history");
+    TuningStore restart(dir.string()); restart.load(policy);
+    require(!restart.find(0, tuning.package, tuning.mode)->pendingProbe &&
+            restart.sensitivity(0, tuning.package, tuning.mode).empty(), "Invalidation is durable");
+    std::cout << "TUNING_RANGE_PROVENANCE_PASS persistence baseline result legacy\n";
+}
+
 void device(const char* stockXml, const char* overlayXml, const fs::path& temp, bool storeTests) {
     Policy policy;
     loadDevice(policy, stockXml, overlayXml);
@@ -861,7 +897,7 @@ void device(const char* stockXml, const char* overlayXml, const fs::path& temp, 
     validation(policy);
     modeBuilds(policy);
     chaoshen(policy, stockXml);
-    if (storeTests) store(policy, temp);
+    if (storeTests) { store(policy, temp); rangeProvenance(policy, temp); }
     require(!policy.sources.empty() && policy.sources.size() <= policy.games.size(), "Sources");
     size_t aliased = 0;
     for (const auto& [alias, target] : policy.overlay.aliases) {

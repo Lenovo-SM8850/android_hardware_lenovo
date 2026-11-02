@@ -44,4 +44,15 @@ parcelable RecordingSummary {
   float tail95;
   float jankPer1000;
   int[] scenesSeen;
+  int diagnosis;
+  int ceilingFps;
+  int analysisTargetFps;
+  int desiredTargetFps = (-1) /* -1 */;
+  boolean confirmedCap;
+  int causeEvidence;
+  float causeCoverage;
+  int classifiedSamples;
+  int shortfallSamples;
+  int[] causeCounts;
+  int analysisVersion;
 }

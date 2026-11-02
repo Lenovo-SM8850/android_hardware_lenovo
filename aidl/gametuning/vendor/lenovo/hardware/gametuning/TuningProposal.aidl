@@ -15,4 +15,9 @@ parcelable TuningProposal {
     // The single change of this round: resource 0 gold, 1 prime, 2 gpu; -1 is the thermal case.
     int probeResource = -1;
     int probeDeltaSteps;
+    long rangeRevision;
+    int diagnosis;
+    int ceilingFps;
+    boolean confirmedCap;
+    int analysisVersion;
 }

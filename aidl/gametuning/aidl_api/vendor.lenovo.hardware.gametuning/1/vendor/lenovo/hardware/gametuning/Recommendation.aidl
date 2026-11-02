@@ -28,4 +28,9 @@ parcelable Recommendation {
   int reasons;
   int[] directions;
   vendor.lenovo.hardware.gametuning.PolicyProfile profile;
+  long rangeRevision;
+  int diagnosis;
+  int ceilingFps;
+  boolean confirmedCap;
+  int analysisVersion;
 }

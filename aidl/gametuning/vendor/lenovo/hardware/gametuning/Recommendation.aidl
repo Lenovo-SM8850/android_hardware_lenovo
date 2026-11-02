@@ -17,4 +17,9 @@ parcelable Recommendation {
     // Gold, prime, gpu: -1 lower, 0 same, 1 higher than the record.
     int[] directions;
     PolicyProfile profile;
+    long rangeRevision;
+    int diagnosis;
+    int ceilingFps;
+    boolean confirmedCap;
+    int analysisVersion;
 }

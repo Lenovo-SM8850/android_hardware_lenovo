@@ -13,6 +13,13 @@ constexpr std::array<double, 3> kWeights{1.0, 0.5, 1.0};
 constexpr double kUnknownSensitivity = 1.0;   // FPS per watt assumed for a resource without history.
 constexpr double kPositiveFloorGain = 2.0;    // FPS per step; below this a probe counts as no sensitivity.
 constexpr int kResourceOrder[3] = {2, 0, 1};  // GPU, gold, prime.
+// Initial classifier thresholds; kept together so device validation can tune one policy.
+constexpr int kCauseWindow = 30, kCapSeconds = 60, kMaxGapMs = 2000;
+constexpr double kSignalCoverage = .90, kPlateauTolerance = .05, kCadenceAgreement = .03;
+constexpr double kShortfallRatio = .90, kFloorRatio = .95, kMinimumRatio = .90;
+constexpr double kPacingBudget = 1.5, kSlowBudget = 1.2, kSustained = .70, kDominant = .80;
+constexpr int kHeadroomGpu = 70, kHeadroomCpu = 650, kBusyGpu = 90, kBusyCpu = 900;
+constexpr double kPeggedRatio = .97, kReductionFloor = .98, kReductionTail = .5;
 
 int topOf(const std::vector<int>& ladder) { return ladder.empty() ? 0 : ladder.back(); }
 
@@ -40,6 +47,42 @@ std::vector<const Sample*> validSamples(const std::vector<Sample>& samples) {
     std::vector<const Sample*> out;
     for (const auto& s : samples) if (valid(s)) out.push_back(&s);
     return out;
+}
+
+bool measuredHeadroom(const std::vector<const Sample*>& samples) {
+    if (samples.empty()) return false;
+    std::array<std::vector<int>, 3> sensors;
+    int bands = 0, pegged = 0;
+    for (const auto* p : samples) {
+        if (p->flags & kFlagSensorFailed) return false;
+        if (p->gpuBusyPercent >= 0) sensors[2].push_back(p->gpuBusyPercent);
+        for (int r = 0; r < 2; ++r) if (p->cpuUtilPermille[r] >= 0) sensors[r].push_back(p->cpuUtilPermille[r]);
+        if (p->band > 0) return false;
+        bands += p->band == 0;
+        bool atCap = false;
+        for (int r = 0; r < 3; ++r) atCap |= p->cap[r] > 0 && p->cur[r] >= kPeggedRatio * p->cap[r];
+        pegged += atCap;
+    }
+    if (bands < kSignalCoverage * samples.size() || pegged >= kSustained * samples.size()) return false;
+    for (int r = 0; r < 3; ++r) {
+        auto& values = sensors[r];
+        if (values.size() < kSignalCoverage * samples.size()) return false;
+        std::sort(values.begin(), values.end());
+        if (percentile(values, 95) > (r == 2 ? kHeadroomGpu : kHeadroomCpu)) return false;
+    }
+    return true;
+}
+
+bool measuredSaturation(const std::vector<const Sample*>& samples) {
+    for (int r = 0; r < 3; ++r) {
+        int known = 0, busy = 0;
+        for (const auto* p : samples) {
+            const int value = r == 2 ? p->gpuBusyPercent : p->cpuUtilPermille[r];
+            known += value >= 0; busy += value >= (r == 2 ? kBusyGpu : kBusyCpu);
+        }
+        if (known >= kSignalCoverage * samples.size() && busy >= kSustained * samples.size()) return true;
+    }
+    return false;
 }
 
 constexpr double kSnapTolerance = 0.03;       // Signal to common target distance, as a fraction of the signal.
@@ -190,6 +233,155 @@ float steadyRatio(const Summary& s) {
     return s.targetFps > 0 ? static_cast<float>(static_cast<double>(s.floor5Fps) / s.targetFps) : 0.f;
 }
 
+Cause classify(const std::vector<Sample>& samples) {
+    Cause out;
+    const auto judged = judge(validSamples(samples));
+    std::vector<const Sample*> segment;
+    std::vector<std::pair<int, int>> caps; // Cadence and usable seconds of qualifying windows.
+    std::vector<float> observedCadences; // Includes successful higher-target windows.
+    int allWindowSamples = 0;
+    int likely = 0, capped = 0, performance = 0, total = 0;
+    auto window = [&]() {
+        if (segment.size() < kCauseWindow) { segment.clear(); return; }
+        const int n = static_cast<int>(segment.size());
+        allWindowSamples += n;
+        std::vector<float> fps, minimum, timing, requests;
+        int desired = segment.front()->desiredTargetFps;
+        std::vector<float> throttles;
+        int thermal = 0, pegged = 0, throttled = 0;
+        for (const auto* s : segment) {
+            fps.push_back(s->fps);
+            if (s->fpsMin >= 0) minimum.push_back(s->fpsMin);
+            if (s->maxFrameTimeUs >= 0) timing.push_back(s->maxFrameTimeUs / 1000.f);
+            if (usableSignal(s->requestedFps)) requests.push_back(s->requestedFps);
+            if (usableSignal(s->throttleFps)) throttles.push_back(s->throttleFps);
+            bool peg = false;
+            for (int r = 0; r < 3; ++r) peg |= s->cap[r] > 0 && s->cur[r] >= kPeggedRatio * s->cap[r];
+            pegged += peg;
+            thermal += s->band > 0;
+
+        }
+        for (auto* values : {&fps, &minimum, &timing, &requests, &throttles}) std::sort(values->begin(), values->end());
+        observedCadences.push_back(percentile(fps, 50));
+        if (desired <= 0) { out.counts[kUnclear] += n; total += n; segment.clear(); return; }
+        out.desiredTargetFps = std::max(out.desiredTargetFps, desired);
+        const bool shortfall = percentile(fps, 50) < kShortfallRatio * desired;
+        if (!shortfall) { segment.clear(); return; }
+        total += n;
+        int cadence = signalTarget(percentile(fps, 50), -1);
+        const bool request = requests.size() >= kSignalCoverage * n;
+        if (request) cadence = signalTarget(percentile(requests, 50), -1);
+        const bool lowerThrottle = throttles.size() >= kSignalCoverage * n && percentile(throttles, 50) <= cadence * (1 + kCadenceAgreement);
+        if (lowerThrottle) cadence = signalTarget(percentile(throttles, 50), -1);
+        int near = 0, voted = 0;
+        for (const auto* s : segment) {
+            near += std::fabs(s->fps - cadence) <= kPlateauTolerance * cadence;
+            voted += usableSignal(s->requestedFps) && std::fabs(s->requestedFps - cadence) <= kCadenceAgreement * cadence;
+            throttled += usableSignal(s->throttleFps) && s->throttleFps <= cadence * (1 + kCadenceAgreement);
+        }
+        const bool direct = segment.front()->selectedGameplay && request && voted >= kSignalCoverage * n && cadence <= kShortfallRatio * desired &&
+                            !lowerThrottle && throttled < kSignalCoverage * n;
+        const bool paced = near >= kSignalCoverage * n && minimum.size() >= kSignalCoverage * n &&
+            timing.size() >= kSignalCoverage * n && percentile(fps, 5) >= kFloorRatio * cadence &&
+            percentile(minimum, 5) >= kMinimumRatio * cadence && percentile(timing, 95) <= kPacingBudget * 1000 / cadence;
+        int label = kUnclear;
+        if (direct) {
+            out.evidence |= kAppCadence | kGameplayRange;
+            if (paced) { label = kGameCap; capped += n; out.evidence |= kPlateau; }
+        }
+        if (!direct && !request && !lowerThrottle && paced && segment.front()->selectedGameplay &&
+            measuredHeadroom(segment) && pegged < kSustained * n && thermal == 0) {
+            label = kLikelyGameCap; likely += n;
+            out.evidence |= kPlateau | kHeadroom | kGameplayRange;
+        }
+        if (measuredSaturation(segment)) {
+            // Residual shortfall is measured against the app vote, otherwise the captured desired target.
+            int deficit = 0;
+            const int target = direct ? cadence : desired;
+            for (const auto* s : segment)
+                deficit += s->fps < kShortfallRatio * target && s->maxFrameTimeUs > kSlowBudget * 1000000 / target;
+            if (deficit >= kSustained * n) {
+                label = thermal >= kSustained * n ? kThermalLimit : kPerformanceLimited;
+                performance += n; out.evidence |= kSaturation;
+                if (label == kThermalLimit) out.evidence |= kThermalEvidence;
+            }
+        }
+        if (label == kUnclear && throttled >= kSignalCoverage * n && paced) {
+            label = kFpsLimited; out.evidence |= kThrottleCeiling;
+        }
+        // An app vote alone is intent, not actionable evidence of a cap. Residual deficits need saturation.
+        const bool supportedDirect = direct && (label == kGameCap || label == kPerformanceLimited || label == kThermalLimit);
+        if (supportedDirect || label == kLikelyGameCap) {
+            caps.emplace_back(cadence, n);
+            out.segments.push_back({segment.front()->timeMs, segment.back()->timeMs, cadence, supportedDirect});
+        }
+        out.counts[label] += n;
+        segment.clear();
+    };
+    const Sample* previous = nullptr;
+    int transition = 0;
+    for (const auto& j : judged) {
+        const Sample* s = j.sample;
+        if (previous && (s->timeMs - previous->timeMs > kMaxGapMs || s->timeMs <= previous->timeMs ||
+            s->sceneId != previous->sceneId || s->mode != previous->mode || s->profileGeneration != previous->profileGeneration ||
+            s->desiredTargetFps != previous->desiredTargetFps || s->renderScale != previous->renderScale ||
+            s->refreshRate != previous->refreshRate || sampleSignal(*s) != sampleSignal(*previous))) {
+            window(); transition = kWarmupSamples;
+        }
+        previous = s;
+        if (transition > 0) { --transition; continue; }
+        if (!j.counted) continue;
+        segment.push_back(s);
+        if (segment.size() == kCauseWindow) window();
+    }
+    window();
+    out.shortfallSamples = total;
+    int best = kUnclear;
+    for (int i = 1; i <= kMixedLimits; ++i) if (out.counts[i] > out.counts[best]) best = i;
+    out.classifiedSamples = total - out.counts[kUnclear];
+    out.coverage = total ? static_cast<float>(out.counts[best]) / total : 0;
+    if (total && out.coverage >= kDominant) out.diagnosis = best;
+    if (performance >= (1 - kDominant) * total && capped + likely >= (1 - kDominant) * total && performance && capped + likely)
+        out.diagnosis = kMixedLimits;
+    int seconds = 0, n = 0;
+    bool agree = true;
+    for (const auto& c : caps) {
+        if (!n) n = c.first;
+        agree &= std::abs(c.first - n) <= kCadenceAgreement * n;
+        seconds += c.second;
+    }
+    // Any sustained faster cadence disproves a single global ceiling, even when it meets the desired target.
+    const bool higherCadence = n > 0 && std::any_of(observedCadences.begin(), observedCadences.end(),
+        [&](float fps) { return fps > n * (1 + kPlateauTolerance); });
+    if (agree && !higherCadence && seconds >= kCapSeconds && seconds >= kDominant * allWindowSamples) {
+        out.ceilingFps = n;
+        out.confirmed = (out.evidence & kAppCadence) && likely == 0;
+        if (out.confirmed) out.analysisTargetFps = n;
+    } else if (out.diagnosis == kGameCap || out.diagnosis == kLikelyGameCap) {
+        out.diagnosis = kUnclear;
+    }
+    return out;
+}
+
+Summary tuningSummary(const std::vector<Sample>& samples, const Ladders& ladders) {
+    const Cause cause = classify(samples);
+    auto adjusted = samples;
+    for (auto& s : adjusted) {
+        const auto segment = std::find_if(cause.segments.begin(), cause.segments.end(), [&](const CapSegment& c) {
+            return c.confirmed && s.timeMs >= c.startMs && s.timeMs <= c.endMs;
+        });
+        if (segment != cause.segments.end()) {
+            s.requestedFps = static_cast<float>(segment->targetFps); s.throttleFps = -1;
+        } else if (cause.counts[kLikelyGameCap] > 0 && sampleSignal(s) <= 0 && s.desiredTargetFps > 0) {
+            // Achieved cadence inferred without a signal must not replace the captured desired target.
+            s.requestedFps = static_cast<float>(s.desiredTargetFps);
+        }
+    }
+    Summary s = summarize(adjusted, ladders);
+    s.cause = cause;
+    return s;
+}
+
 Summary summarize(const std::vector<Sample>& samples, const Ladders& ladders) {
     Summary s;
     std::set<int> scenes;
@@ -292,15 +484,37 @@ Summary summarize(const std::vector<Sample>& samples, const Ladders& ladders) {
     }
     s.throttled = static_cast<float>(static_cast<double>(throttled) / n);
     for (const auto* p : v) if (p->mode != v[0]->mode || p->profileGeneration != v[0]->profileGeneration) { s.mixed = true; break; }
+    int capturedTarget = -1; float capturedScale = -1, capturedRefresh = -1;
+    for (const auto* p : v) {
+        if (p->desiredTargetFps > 0) {
+            if (capturedTarget > 0 && capturedTarget != p->desiredTargetFps) s.mixed = true;
+            capturedTarget = p->desiredTargetFps;
+        }
+        if (p->renderScale > 0) {
+            if (capturedScale > 0 && capturedScale != p->renderScale) s.mixed = true;
+            capturedScale = p->renderScale;
+        }
+        if (p->refreshRate > 0) {
+            if (capturedRefresh > 0 && capturedRefresh != p->refreshRate) s.mixed = true;
+            capturedRefresh = p->refreshRate;
+        }
+    }
+    s.renderScale = capturedScale; s.refreshRate = capturedRefresh;
+    s.cause = classify(samples);
     return s;
 }
 
-Wanted wanted(const std::vector<Sample>& samples, const Summary& s, const ProfileView& recorded,
+Wanted wanted(const std::vector<Sample>& samples, const Summary& raw, const ProfileView& recorded,
               const Ladders& ladders, int goalIn) {
+    const Summary s = raw.cause.segments.empty() ? raw : tuningSummary(samples, ladders);
     const int goal = clampGoal(goalIn);
     Wanted w;
     const auto v = validSamples(samples);
     const double H = s.hitRate;
+    const bool inferred = s.cause.counts[kLikelyGameCap] > 0;
+    const bool hasCap = !s.cause.segments.empty();
+    const bool safeCapReduction = steadyRatio(s) >= kReductionFloor && s.tail95 >= 0 && s.tail95 <= kReductionTail &&
+        measuredHeadroom(v);
     for (int r = 0; r < 3; ++r) {
         const auto& ladder = ladders[r];
         w.want[r] = 0;
@@ -323,6 +537,8 @@ Wanted wanted(const std::vector<Sample>& samples, const Summary& s, const Profil
             if (want == -1 && !(H >= 0.99 && P < 0.05)) { target = cap; want = 0; }
         }
         w.target[r] = target; w.cap[r] = cap; w.want[r] = want;
+        if ((inferred && w.want[r] != 0) ||
+            (hasCap && w.want[r] < 0 && !safeCapReduction)) { w.want[r] = 0; w.target[r] = cap; }
     }
 
     std::vector<int> skins;
@@ -331,7 +547,7 @@ Wanted wanted(const std::vector<Sample>& samples, const Summary& s, const Profil
 
     const bool more = w.want[0] == 1 || w.want[1] == 1 || w.want[2] == 1;
     const bool less = w.want[0] == -1 || w.want[1] == -1 || w.want[2] == -1;
-    if (H >= 0.97) w.reasons |= kTargetMet;
+    if (H >= 0.97 && !inferred) w.reasons |= kTargetMet;
     if (H < 0.90) w.reasons |= kFpsShort;
     if (w.want[0] == 1 || w.want[1] == 1) w.reasons |= kCpuBound;
     if (w.want[2] == 1) w.reasons |= kGpuBound;
@@ -344,7 +560,8 @@ Wanted wanted(const std::vector<Sample>& samples, const Summary& s, const Profil
 
     const int current = recorded.thermalCase;
     w.thermalCase = current;
-    if (goal == kGoalFrames && (w.reasons & kThermalLimited)) w.thermalCase = std::max(current, std::min(current + 100, 300));
+    if (goal == kGoalFrames && (w.reasons & kThermalLimited) && !inferred)
+        w.thermalCase = std::max(current, std::min(current + 100, 300));
     else if (goal == kGoalEfficiency && (w.reasons & kHot)) w.thermalCase = std::max(current - 100, 100);
     return w;
 }
@@ -357,7 +574,7 @@ std::vector<Ranked> recommend(const std::vector<Sample>& samples, const ProfileV
     const int goal = clampGoal(goalIn);
     const auto v = validSamples(samples);
     if (v.size() < static_cast<size_t>(kMinValidSamples)) { if (error) *error = kNotEnoughData; return {}; }
-    const Summary s = summarize(samples, ladders);
+    const Summary s = tuningSummary(samples, ladders);
     if (s.mixed) { if (error) *error = kMixed; return {}; }
     const Wanted w = wanted(samples, s, recorded, ladders, goal);
     if (reasons) *reasons = w.reasons;
@@ -393,7 +610,7 @@ std::vector<Ranked> recommend(const std::vector<Sample>& samples, const ProfileV
 
     std::vector<Ranked> ranked;
     for (const auto& c : candidates) {
-        if (sameSteps(c.profile.steps, recorded.steps) && c.profile.thermalCase == recorded.thermalCase) continue;
+        if (sameSteps(c.profile.steps, recorded.steps) && c.profile.thermalCase == recorded.thermalCase && !s.cause.confirmed) continue;
         Ranked item;
         item.candidate = c;
         item.candidate.hasExpected = false;
@@ -411,6 +628,28 @@ std::vector<Ranked> recommend(const std::vector<Sample>& samples, const ProfileV
             const int index = indexAtOrBelow(ladders[r], capAt(c.profile, r, medianSkin, ladders[r]));
             item.directions[r] = (index > capIndex[r]) - (index < capIndex[r]);
         }
+        // Eligibility is a hard gate before either measured or heuristic ranking.
+        const bool inferred = s.cause.counts[kLikelyGameCap] > 0;
+        const bool capAware = !s.cause.segments.empty();
+        const bool safetyReduction = (skinLimitMilliC > 0 && s.maxSkinC * 1000 >= skinLimitMilliC) ||
+            (recorded.powerTargetMw > 0 && s.avgPowerMw > recorded.powerTargetMw);
+        bool unsupported = false;
+        if (capAware) {
+            // Check every breakpoint as well as observed temperatures, rather than only the median row.
+            auto temperatures = skins;
+            for (const auto& step : recorded.steps) temperatures.push_back(step.temperature);
+            for (const auto& step : c.profile.steps) temperatures.push_back(step.temperature);
+            for (double temperature : temperatures) for (int r = 0; r < 3; ++r) {
+                const int before = capAt(recorded, r, temperature, ladders[r]);
+                const int after = capAt(c.profile, r, temperature, ladders[r]);
+                unsupported |= after > before && (inferred || w.want[r] <= 0);
+                unsupported |= after < before && !safetyReduction && (inferred || w.want[r] >= 0);
+            }
+            const bool residual = s.cause.counts[kPerformanceLimited] > 0 || s.cause.counts[kThermalLimit] > 0;
+            unsupported |= c.profile.thermalCase > recorded.thermalCase &&
+                (inferred || !residual || !(w.reasons & kFpsShort));
+        }
+        if (unsupported) continue;
         if (item.candidate.hasExpected) {
             const Summary& e = item.candidate.expected;
             const bool violation = skinLimitMilliC > 0 && e.maxSkinC >= 0 && e.maxSkinC * 1000.0 >= skinLimitMilliC;
@@ -455,6 +694,20 @@ std::vector<Ranked> recommend(const std::vector<Sample>& samples, const ProfileV
     });
     if (ranked.size() > 3) ranked.resize(3);
     return ranked;
+}
+
+bool compatibleDisplay(float baselineScale, float baselineRefresh, float nextScale, float nextRefresh) {
+    return std::isfinite(baselineScale) && std::isfinite(baselineRefresh) &&
+        baselineScale > 0 && baselineRefresh > 0 && baselineScale == nextScale && baselineRefresh == nextRefresh;
+}
+
+bool compatibleProbe(const Summary& baseline, const Summary& next) {
+    return !baseline.mixed && !next.mixed && baseline.validSamples >= kMinValidSamples &&
+        next.validSamples >= kMinValidSamples && baseline.targetFps == next.targetFps &&
+        baseline.cause.desiredTargetFps == next.cause.desiredTargetFps &&
+        baseline.cause.analysisTargetFps == next.cause.analysisTargetFps &&
+        baseline.cause.diagnosis == next.cause.diagnosis &&
+        compatibleDisplay(baseline.renderScale, baseline.refreshRate, next.renderScale, next.refreshRate);
 }
 
 Sensitivity closeProbe(int resource, int deltaSteps, const Summary& baseline, const Summary& next) {
@@ -543,7 +796,7 @@ bool autoTune(const Policy& policy, const std::vector<Sample>& samples, const Pr
         for (int r = 0; r < 3; ++r) ladders[r] = policy.ladder(r);
         const auto v = validSamples(samples);
         if (v.size() < static_cast<size_t>(kMinValidSamples)) { if (error) *error = kNotEnoughData; return false; }
-        const Summary s = summarize(samples, ladders);
+        const Summary s = tuningSummary(samples, ladders);
         if (s.mixed) { if (error) *error = kMixed; return false; }
         TuningRecord base = current;
         Mode oldMode;
@@ -650,6 +903,7 @@ bool autoTune(const Policy& policy, const std::vector<Sample>& samples, const Pr
         const bool tailBad = s.tail95 >= 0 && s.tail95 > 1.0;
         const bool short_ = targetKnown && (steadyRatio(s) < 0.95f || tailBad);
         if (short_) {
+            if (s.cause.counts[kLikelyGameCap] > 0) return finish(nullptr, -1, 0);
             if (!thermal.cool) return finish(nullptr, -1, 0);
             // Positive sensitivity first, then unknown resources in GPU, Gold, Prime order.
             int pick = -1;
@@ -668,9 +922,10 @@ bool autoTune(const Policy& policy, const std::vector<Sample>& samples, const Pr
             return finish(nullptr, -1, 0);
         }
 
-        const bool ample = goal == kGoalFrames ? false
+        const bool ample = s.cause.counts[kLikelyGameCap] > 0 ? false : !s.cause.segments.empty() ? targetKnown && steadyRatio(s) >= kReductionFloor && s.tail95 >= 0 && s.tail95 <= kReductionTail
+            : goal == kGoalFrames ? false
             : goal == kGoalEfficiency ? targetKnown
-            : targetKnown && steadyRatio(s) >= 0.98f && (s.tail95 < 0 || s.tail95 <= 0.5);
+            : targetKnown && steadyRatio(s) >= kReductionFloor && (s.tail95 < 0 || s.tail95 <= kReductionTail);
         if (ample && thermal.cool) {
             int pick = -1;
             std::optional<Trial> picked;

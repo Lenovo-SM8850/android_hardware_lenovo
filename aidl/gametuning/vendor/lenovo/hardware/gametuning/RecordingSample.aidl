@@ -39,4 +39,9 @@ parcelable RecordingSample {
     int batteryPercent = -1;
     // Resolved target frame rate of this sample, -1 when unknown.
     float targetFps = -1.0f;
+    float requestedFps = -1.0f;
+    float throttleFps = -1.0f;
+    int desiredTargetFps = -1;
+    float renderScale = -1.0f;
+    float refreshRate = -1.0f;
 }

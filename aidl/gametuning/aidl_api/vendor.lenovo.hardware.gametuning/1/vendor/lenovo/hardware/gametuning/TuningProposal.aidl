@@ -26,4 +26,9 @@ parcelable TuningProposal {
   vendor.lenovo.hardware.gametuning.PolicyProfile preview;
   int probeResource = (-1) /* -1 */;
   int probeDeltaSteps;
+  long rangeRevision;
+  int diagnosis;
+  int ceilingFps;
+  boolean confirmedCap;
+  int analysisVersion;
 }

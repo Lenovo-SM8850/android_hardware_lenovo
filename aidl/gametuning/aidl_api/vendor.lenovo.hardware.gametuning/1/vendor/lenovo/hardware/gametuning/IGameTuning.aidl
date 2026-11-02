@@ -37,6 +37,11 @@ interface IGameTuning {
   vendor.lenovo.hardware.gametuning.TuningProposal autoTune(int userId, String id, int goal);
   void registerSessionListener(in vendor.lenovo.hardware.gametuning.ISessionListener listener);
   void unregisterSessionListener(in vendor.lenovo.hardware.gametuning.ISessionListener listener);
+  vendor.lenovo.hardware.gametuning.RecordingInfo setRecordingRange(int userId, String id, int startMs, int endMs, long expectedRevision);
+  vendor.lenovo.hardware.gametuning.RecordingSample[] getEffectiveRecordingSamples(int userId, String id, int offset, long expectedRevision);
+  vendor.lenovo.hardware.gametuning.RecordingSample[] getRawRecordingSamples(int userId, String id, int offset, long expectedRevision);
+  void setRecordingContext(int userId, String packageName, int desiredFps, float renderScale, float refreshRate);
+  void invalidateDisplayProbe(int userId, String packageName, int mode);
   const int BASE_BALANCED = 1;
   const int BASE_PERFORMANCE = 2;
   const int BASE_BATTERY = 3;
@@ -78,4 +83,11 @@ interface IGameTuning {
   const int CHANGE_THERMAL_CASE = 3;
   const int CHANGE_FRAME_BOOST = 4;
   const int TEMPERATURE_UNAVAILABLE = (-273000) /* -273000 */;
+  const int DIAGNOSIS_UNCLEAR = 0;
+  const int DIAGNOSIS_GAME_CAP = 1;
+  const int DIAGNOSIS_LIKELY_GAME_CAP = 2;
+  const int DIAGNOSIS_FPS_LIMITED = 3;
+  const int DIAGNOSIS_PERFORMANCE_LIMITED = 4;
+  const int DIAGNOSIS_THERMAL_LIMITED = 5;
+  const int DIAGNOSIS_MIXED_LIMITS = 6;
 }
