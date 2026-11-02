@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<selector xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Activated marks an invalid code. -->
+    <item android:state_activated="true">
+        <shape android:shape="rectangle">
+            <corners android:radius="@dimen/settingslib_expressive_radius_extrasmall2" />
+            <stroke android:width="2dp" android:color="@color/settingslib_materialColorError" />
+        </shape>
+    </item>
+    <item android:state_focused="true">
+        <shape android:shape="rectangle">
+            <corners android:radius="@dimen/settingslib_expressive_radius_extrasmall2" />
+            <stroke android:width="2dp" android:color="@color/settingslib_materialColorPrimary" />
+        </shape>
+    </item>
+    <item>
+        <shape android:shape="rectangle">
+            <corners android:radius="@dimen/settingslib_expressive_radius_extrasmall2" />
+            <stroke android:width="1dp" android:color="@color/settingslib_materialColorOutline" />
+        </shape>
+    </item>
+</selector>

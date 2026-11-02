@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:baselineAligned="false"
+        android:orientation="horizontal"
+        android:paddingTop="@dimen/settingslib_expressive_space_small4"
+        android:paddingBottom="@dimen/settingslib_expressive_space_extrasmall4"
+        android:paddingStart="?attr/dialogPreferredPadding"
+        android:paddingEnd="?attr/dialogPreferredPadding">
+
+        <io.github.miner7222.halo.ColourWheelView
+            android:id="@+id/colour_wheel"
+            android:layout_width="@dimen/colour_picker_wheel_size_wide"
+            android:layout_height="@dimen/colour_picker_wheel_size_wide"
+            android:layout_gravity="center_vertical" />
+
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:layout_marginStart="@dimen/settingslib_expressive_space_small4"
+            android:orientation="vertical">
+
+            <TextView
+                android:id="@+id/colour_title"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:textAppearance="@style/TextAppearance.SettingsLib.HeadlineSmall"
+                android:textColor="@color/settingslib_materialColorOnSurface" />
+
+            <SeekBar
+                android:id="@+id/colour_brightness"
+                android:layout_width="match_parent"
+                android:layout_height="@dimen/colour_picker_slider_height"
+                android:layout_marginTop="@dimen/settingslib_expressive_space_extrasmall4"
+                android:max="100"
+                android:splitTrack="false"
+                android:progressDrawable="@drawable/colour_brightness_track"
+                android:thumb="@drawable/colour_brightness_thumb"
+                android:contentDescription="@string/brightness" />
+
+            <include layout="@layout/colour_picker_code" />
+
+            <include layout="@layout/colour_picker_buttons" />
+        </LinearLayout>
+    </LinearLayout>
+</ScrollView>

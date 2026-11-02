@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical">
+
+    <EditText
+        android:id="@+id/colour_code"
+        android:layout_width="match_parent"
+        android:layout_height="56dp"
+        android:paddingHorizontal="16dp"
+        android:background="@drawable/colour_code_background"
+        android:textAppearance="@style/TextAppearance.SettingsLib.BodyLarge"
+        android:textColor="@color/settingslib_materialColorOnSurface"
+        android:textColorHint="@color/settingslib_materialColorOnSurfaceVariant"
+        android:inputType="textCapCharacters|textVisiblePassword|textNoSuggestions"
+        android:imeOptions="actionDone"
+        android:singleLine="true"
+        android:textDirection="ltr"
+        android:autofillHints=""
+        android:hint="@string/colour_code_hint"
+        android:contentDescription="@string/colour_code" />
+
+    <TextView
+        android:id="@+id/colour_code_error"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:minHeight="20dp"
+        android:layout_marginTop="4dp"
+        android:paddingHorizontal="16dp"
+        android:accessibilityLiveRegion="polite"
+        android:text="@string/invalid_colours"
+        android:textAppearance="@style/TextAppearance.SettingsLib.BodySmall"
+        android:textColor="@color/settingslib_materialColorError"
+        android:visibility="invisible" />
+</LinearLayout>
