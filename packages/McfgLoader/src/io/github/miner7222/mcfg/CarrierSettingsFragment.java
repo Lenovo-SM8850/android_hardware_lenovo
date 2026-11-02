@@ -16,9 +16,13 @@ import android.provider.OpenableColumns;
 import android.telephony.SubscriptionInfo;
 import android.telephony.SubscriptionManager;
 import android.telephony.TelephonyManager;
+import android.text.SpannableString;
+import android.text.style.RelativeSizeSpan;
+import android.text.style.TypefaceSpan;
 import android.view.View;
 
 import androidx.appcompat.app.AlertDialog;
+import androidx.preference.DropDownPreference;
 import androidx.preference.ListPreference;
 import androidx.preference.Preference;
 import androidx.preference.PreferenceCategory;
@@ -61,7 +65,8 @@ public final class CarrierSettingsFragment extends SettingsBasePreferenceFragmen
     private String importsHome = "";
     private final java.util.Map<Preference, ProfileEntry> importRows = new java.util.HashMap<>();
     private MainSwitchPreference automatic;
-    private ListPreference sim;
+    private DropDownPreference sim;
+    private String statusPath = "";
     private final Handler main = new Handler(Looper.getMainLooper());
     private final ExecutorService io = Executors.newSingleThreadExecutor();
     // Status polling has its own thread so a slow loader call never delays imports.
@@ -176,10 +181,7 @@ public final class CarrierSettingsFragment extends SettingsBasePreferenceFragmen
                                         transactionRunning = snapshot == null
                                                 || !snapshot.transactionToken.isEmpty();
                                         updateImportActions();
-                                        status.setSummary(
-                                                snapshot != null
-                                                        ? statusText(snapshot)
-                                                        : getString(R.string.waiting));
+                                        showStatus(snapshot);
                                     }
                                 });
                     });
@@ -188,8 +190,12 @@ public final class CarrierSettingsFragment extends SettingsBasePreferenceFragmen
         }
     }
 
-    /** Maps durable loader progress and applied sources to the status text. */
-    private String statusText(McfgStatus loader) {
+    /** Maps durable loader progress and applied sources to the status card. */
+    private void showStatus(McfgStatus loader) {
+        if (loader == null) {
+            setStatus(getString(R.string.waiting), "");
+            return;
+        }
         String mapped = CoordinatorState.displayState(loader.state, loader.profileId,
                 loader.sourceName, loader.candidateProfileId,
                 prefs.getBoolean("automatic", false), loader.enabled);
@@ -204,9 +210,21 @@ public final class CarrierSettingsFragment extends SettingsBasePreferenceFragmen
                                 : "applied".equals(mapped)
                                         ? R.string.status_applied
                                         : R.string.status_default);
-        if ("applied".equals(mapped))
-            text += "\n" + loader.sourceName;
-        return text;
+        setStatus(text, "applied".equals(mapped) ? loader.sourceName : "");
+    }
+
+    private void setStatus(String title, String path) {
+        status.setTitle(title);
+        if (path.equals(statusPath)) return;
+        statusPath = path;
+        if (path.isEmpty()) {
+            status.setSummary(null);
+            return;
+        }
+        SpannableString mono = new SpannableString(path);
+        mono.setSpan(new TypefaceSpan("monospace"), 0, path.length(), 0);
+        mono.setSpan(new RelativeSizeSpan(0.86f), 0, path.length(), 0);
+        status.setSummary(mono);
     }
 
     private static IMcfgLoader worker() throws Exception {
@@ -238,7 +256,7 @@ public final class CarrierSettingsFragment extends SettingsBasePreferenceFragmen
         TopIntroPreference intro = new TopIntroPreference(requireContext());
         intro.setTitle(R.string.description);
         getPreferenceScreen().addPreference(intro);
-        sim = new ListPreference(requireContext());
+        sim = new DropDownPreference(requireContext());
         sim.setKey("sim");
         sim.setTitle(R.string.sim);
         sim.setPersistent(false);
@@ -264,12 +282,12 @@ public final class CarrierSettingsFragment extends SettingsBasePreferenceFragmen
                             .putBoolean("automatic", enabled)
                             .putBoolean("disable_requested", !enabled)
                             .commit();
-                    if (!enabled) status.setSummary(R.string.status_default);
+                    if (!enabled) setStatus(getString(R.string.status_default), "");
                     service(enabled ? McfgCoordinatorService.ENABLE : McfgCoordinatorService.RESTORE);
                     return true;
                 });
         getPreferenceScreen().addPreference(automatic);
-        status = action(getPreferenceScreen(), R.string.notice, () -> {});
+        status = action(category(R.string.notice), R.string.waiting, () -> {});
         status.setSelectable(false);
         importAction = action(
                 getPreferenceScreen(),
@@ -310,6 +328,8 @@ public final class CarrierSettingsFragment extends SettingsBasePreferenceFragmen
                                     .addToBackStack(null)
                                     .commit();
                         });
+        importAction.setWidgetLayoutResource(R.layout.preference_chevron);
+        overridesEntry.setWidgetLayoutResource(R.layout.preference_chevron);
         overridesEntry.setEnabled(active());
         imported = category(R.string.imported_profiles);
         imported.setVisible(false);
