@@ -1,5 +1,18 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 <resources>
+    <!-- Applied over the activity theme, which the toolbar base class sets again on create. -->
+    <style name="ThemeOverlay.McfgLoader" parent="">
+        <item name="alertDialogTheme">@style/Theme.McfgLoader.AlertDialog</item>
+    </style>
+
+    <!-- Standard text-button dialog actions in place of the pill buttons. -->
+    <style name="Theme.McfgLoader.AlertDialog" parent="Theme.AlertDialog.SettingsLib.Expressive">
+        <item name="buttonBarStyle">@style/Widget.McfgLoader.ButtonBar</item>
+        <item name="buttonBarPositiveButtonStyle">@style/Widget.McfgLoader.DialogButton</item>
+        <item name="buttonBarNegativeButtonStyle">@style/Widget.McfgLoader.DialogButton</item>
+        <item name="buttonBarNeutralButtonStyle">@style/Widget.McfgLoader.DialogButton</item>
+    </style>
+
     <style name="Widget.McfgLoader.ButtonBar" parent="Widget.SettingsLib.ButtonBar">
         <item name="android:minHeight">72dp</item>
         <item name="android:paddingBottom">16dp</item>

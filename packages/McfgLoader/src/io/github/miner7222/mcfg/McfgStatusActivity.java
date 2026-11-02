@@ -7,8 +7,10 @@ import android.telephony.SubscriptionInfo;
 import android.telephony.SubscriptionManager;
 import android.telephony.TelephonyCallback;
 import android.telephony.TelephonyManager;
+import android.view.View;
 
 import com.android.settingslib.collapsingtoolbar.CollapsingToolbarBaseActivity;
+import com.google.android.material.appbar.AppBarLayout;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -17,6 +19,7 @@ import java.util.Map;
 
 public final class McfgStatusActivity extends CollapsingToolbarBaseActivity {
     private static final String MAIN = "main";
+    private static final int MAX_CONTENT_DP = 840;
     private final Map<Integer, CallCallback> callbacks = new HashMap<>();
     private boolean resumed;
     private final SubscriptionManager.OnSubscriptionsChangedListener subListener =
@@ -43,8 +46,27 @@ public final class McfgStatusActivity extends CollapsingToolbarBaseActivity {
             fragment.setArguments(args);
             getSupportFragmentManager().beginTransaction().add(frame, fragment, MAIN).commit();
         }
+        getTheme().applyStyle(R.style.ThemeOverlay_McfgLoader, true);
+        constrainWidth();
+        // Start with the large title in every orientation.
+        AppBarLayout appBar = getAppBarLayout();
+        if (appBar != null) appBar.post(() -> appBar.setExpanded(true, false));
         if (android.os.UserHandle.myUserId() == android.os.UserHandle.USER_SYSTEM)
             startService(new Intent(this, McfgCoordinatorService.class));
+    }
+
+    // Single-pane content stays in a centered column on wide windows.
+    private void constrainWidth() {
+        View root = findViewById(com.android.settingslib.collapsingtoolbar.R.id.content_parent);
+        if (root == null) return;
+        root.addOnLayoutChangeListener(
+                (view, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom) -> {
+                    float density = view.getResources().getDisplayMetrics().density;
+                    int max = Math.round(MAX_CONTENT_DP * density);
+                    int side = Math.max(0, (right - left - max) / 2);
+                    if (view.getPaddingLeft() != side || view.getPaddingRight() != side)
+                        view.setPadding(side, view.getPaddingTop(), side, view.getPaddingBottom());
+                });
     }
 
     @Override
