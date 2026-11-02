@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="0dp"
+    android:layout_height="wrap_content"
+    android:minHeight="64dp"
+    android:gravity="center_vertical"
+    android:orientation="horizontal"
+    android:paddingHorizontal="12dp"
+    android:paddingVertical="8dp"
+    android:background="@drawable/colour_card_background"
+    android:clickable="true"
+    android:focusable="true">
+
+    <ImageView
+        android:id="@+id/colour_swatch"
+        android:layout_width="@dimen/colour_swatch_size"
+        android:layout_height="@dimen/colour_swatch_size"
+        android:importantForAccessibility="no" />
+
+    <LinearLayout
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_weight="1"
+        android:layout_marginStart="8dp"
+        android:orientation="vertical">
+
+        <TextView
+            android:id="@+id/colour_label"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:ellipsize="end"
+            android:maxLines="1"
+            android:textAppearance="@style/TextAppearance.SettingsLib.TitleSmall"
+            android:textColor="@color/settingslib_materialColorOnSurface" />
+
+        <TextView
+            android:id="@+id/colour_hex"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:ellipsize="end"
+            android:fontFamily="monospace"
+            android:maxLines="1"
+            android:textAppearance="@style/TextAppearance.SettingsLib.BodySmall"
+            android:textColor="@color/settingslib_materialColorOnSurfaceVariant" />
+    </LinearLayout>
+</LinearLayout>
