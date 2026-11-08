@@ -4,7 +4,10 @@
     <string name="unsupported_carrier_text">The modem has no profile for this carrier. Tap to set one up.</string>
     <string name="unsupported_carrier_channel_name">Carrier profile suggestions</string>
     <string name="unsupported_carrier_channel_description">Suggestions for carriers without a modem profile</string>
-    <string name="baseline_restart">Restarting the modem to rebuild its baseline configuration</string>
+    <string name="baseline_restart">Restarting modem</string>
+    <string name="status_restoring">Restoring profile</string>
+    <string name="status_applying">Applying profile</string>
+    <string name="status_restarting_ims">Restarting IMS registration</string>
     <string name="normalizing">Normalizing automatic modem selection</string>
     <string name="app_name">Carrier settings</string>
     <string name="description">Apply carrier profiles to the modem.</string>

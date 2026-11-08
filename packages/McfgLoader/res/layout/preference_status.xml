@@ -1,0 +1,60 @@
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<!-- Same height as the other rows; the indicator overlays the bottom edge so
+     showing it does not change the row height. -->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:minHeight="@dimen/settingslib_expressive_space_large3"
+    android:paddingStart="?android:attr/listPreferredItemPaddingStart"
+    android:paddingEnd="?android:attr/listPreferredItemPaddingEnd">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center_vertical"
+        android:orientation="vertical"
+        android:paddingTop="16dp"
+        android:paddingBottom="16dp">
+
+        <TextView
+            android:id="@android:id/title"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:textAppearance="?android:attr/textAppearanceListItem"
+            android:textColor="@color/settingslib_materialColorOnSurface" />
+
+        <TextView
+            android:id="@android:id/summary"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="2dp"
+            android:textAppearance="?android:attr/textAppearanceListItemSecondary"
+            android:textColor="@color/settingslib_materialColorOnSurfaceVariant"
+            android:visibility="gone" />
+
+    </LinearLayout>
+
+    <!-- M3-style 4dp linear indicator; the platform ProgressBar keeps the
+         indeterminate animation, the clipped track gives it the rounded shape. -->
+    <FrameLayout
+        android:id="@+id/status_progress"
+        android:layout_width="match_parent"
+        android:layout_height="4dp"
+        android:layout_gravity="bottom"
+        android:layout_marginBottom="12dp"
+        android:background="@drawable/status_progress_track"
+        android:clipToOutline="true"
+        android:importantForAccessibility="no"
+        android:visibility="gone">
+
+        <ProgressBar
+            android:id="@+id/status_progress_bar"
+            style="?android:attr/progressBarStyleHorizontal"
+            android:layout_width="match_parent"
+            android:layout_height="4dp"
+            android:indeterminate="true"
+            android:indeterminateTint="@color/settingslib_materialColorPrimary"
+            android:indeterminateTintMode="src_in"
+            android:importantForAccessibility="no" />
+    </FrameLayout>
+</FrameLayout>
