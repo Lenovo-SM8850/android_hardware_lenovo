@@ -16,10 +16,16 @@ import android.os.SystemClock;
 import android.os.UserHandle;
 import android.provider.Settings;
 import android.telephony.CarrierConfigManager;
+import android.telephony.ServiceState;
 import android.telephony.SubscriptionInfo;
 import android.telephony.SubscriptionManager;
 import android.telephony.TelephonyCallback;
 import android.telephony.TelephonyManager;
+import android.telephony.ims.ImsMmTelManager;
+import android.telephony.ims.ImsReasonInfo;
+import android.telephony.ims.ImsRegistrationAttributes;
+import android.telephony.ims.RegistrationManager;
+import android.util.Log;
 
 import vendor.lenovo.hardware.mcfg.IMcfgLoader;
 import vendor.lenovo.hardware.mcfg.McfgStatus;
@@ -38,6 +44,9 @@ import java.util.concurrent.FutureTask;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public final class McfgCoordinatorService extends Service {
+    private static final String TAG = "LenovoMcfgLoader";
+    private static final long IMS_RESTART_DELAY_MS = 10_000;
+    private static final long IMS_PHASE_TIMEOUT_MS = 30_000;
     static final String NAME = "vendor.lenovo.hardware.mcfg.IMcfgLoader/default";
     static final String PROBE = "io.github.miner7222.mcfg.PROBE";
     static final String RESTORE = "io.github.miner7222.mcfg.RESTORE";
@@ -95,6 +104,18 @@ public final class McfgCoordinatorService extends Service {
             }
         });
     };
+    // Feature 1: one automatic IMS restart after a completed automatic apply.
+    // All fields below are main-thread confined; the decision is published to
+    // the fragment through the shared "mcfg" preferences.
+    private String imsToken = "";
+    private String imsWatchToken = "";
+    private String imsIdentity = "";
+    private int imsSubId = SubscriptionManager.INVALID_SUBSCRIPTION_ID;
+    private boolean imsTimerArmed, imsRestarted, imsRegistered, imsPhase;
+    private ImsMmTelManager imsManager;
+    private RegistrationManager.RegistrationCallback imsCallback;
+    private final Runnable imsTimeout = () -> runImsRestart();
+    private final Runnable imsPhaseTimeout = () -> finishIms("registration timeout");
     private final SharedPreferences.OnSharedPreferenceChangeListener preferenceListener =
             (preferences, key) -> {
                 if ("automatic".equals(key) || "disable_requested".equals(key)
@@ -103,6 +124,7 @@ public final class McfgCoordinatorService extends Service {
                     if (!preferences.getBoolean("automatic", false)) {
                         main.removeCallbacks(settled);
                         main.removeCallbacks(recoveryTimeout);
+                        main.post(() -> cancelImsRestart("automatic disabled"));
                         settleUntil = 0;
                         if ("automatic".equals(key)) {
                             cancelAutomaticWork = busy.get();
@@ -144,6 +166,8 @@ public final class McfgCoordinatorService extends Service {
             return;
         }
         prefs = createDeviceProtectedStorageContext().getSharedPreferences("mcfg", MODE_PRIVATE);
+        // A phase survives only while this process keeps its timer alive.
+        prefs.edit().remove("ims_restart_phase").commit();
         carrierNotice = new UnsupportedCarrierNotice(this, prefs);
         configVersion = prefs.getLong("config_version", 0);
         verifiedConfigVersion = prefs.getLong("verified_config_version", 0);
@@ -214,6 +238,7 @@ public final class McfgCoordinatorService extends Service {
         main.removeCallbacks(settled);
         main.removeCallbacks(readinessRetry);
         main.removeCallbacks(recoveryTimeout);
+        cancelImsRestart("service destroyed");
         prefs.unregisterOnSharedPreferenceChangeListener(preferenceListener);
         unregisterReceiver(carrierReceiver);
         subscriptions.removeOnSubscriptionsChangedListener(subListener);
@@ -318,6 +343,8 @@ public final class McfgCoordinatorService extends Service {
                 throw new IllegalStateException("identity unavailable");
             active.sort(Comparator.comparingInt(SubscriptionInfo::getSimSlotIndex));
             syncCallbacks(active);
+            // A newly registered slot callback can complete the in-service wait.
+            maybeArmImsTimer();
             boolean radiosReady = true;
             for (SlotCallback cb : callbacks.values()) radiosReady &= cb.radioOn;
             state.setRadiosReady(radiosReady);
@@ -349,7 +376,11 @@ public final class McfgCoordinatorService extends Service {
             }
             operators.sort(String::compareTo);
             String nextIdentity = active.isEmpty() ? "no_sim" : String.join(";", operators);
-            if (state.observe(nextIdentity)) main.removeCallbacks(readinessRetry);
+            if (state.observe(nextIdentity)) {
+                main.removeCallbacks(readinessRetry);
+                cancelImsRestart("SIM identity changed");
+            }
+            if ("no_sim".equals(nextIdentity)) cancelImsRestart("SIM removed");
             home = operators.toArray(new String[0]);
             contextEpoch = state.epoch();
             noticeIdentities = identities;
@@ -413,6 +444,12 @@ public final class McfgCoordinatorService extends Service {
         // renews/revokes during long calls through the loader's real Binder pool.
         worker.updateContext(snapshot, SystemProperties.get("gsm.version.baseband", ""),
                 contextSafe && epoch == contextEpoch && epoch == state.epoch());
+    }
+
+    private static boolean isInService(ServiceState serviceState) {
+        return serviceState != null
+                && (serviceState.getDataRegState() == ServiceState.STATE_IN_SERVICE
+                        || serviceState.getVoiceRegState() == ServiceState.STATE_IN_SERVICE);
     }
 
     private static String readBootId() {
@@ -607,6 +644,7 @@ public final class McfgCoordinatorService extends Service {
                                 status.transactionToken, prefs.getString("restart_token", ""))
                         && contextSafe
                         && epoch == contextEpoch) {
+                    final String completedToken = status.transactionToken;
                     renewContext(epoch);
                     McfgStatus result = worker.complete(status.transactionToken);
                     publish(result);
@@ -621,6 +659,10 @@ public final class McfgCoordinatorService extends Service {
                             .remove("restart_saw_down")
                             .remove("restart_note")
                             .commit();
+                    // Only a completed overlay apply (not the 07 baseline reset
+                    // or an OFF restore) earns the one IMS registration check.
+                    if ("committed".equals(result.state) && !result.profileId.isEmpty())
+                        main.post(() -> armImsRestart(completedToken));
                 }
                 return;
             }
@@ -684,6 +726,175 @@ public final class McfgCoordinatorService extends Service {
         prefs.edit().putLong("verified_config_version", version).commit();
     }
 
+    /** Arms the single IMS restart check for a completed automatic apply token. */
+    private void armImsRestart(String token) {
+        if (token == null || token.isEmpty()) return;
+        if (!prefs.getBoolean("automatic", false)) return;
+        if (token.equals(prefs.getString("ims_restart_token", ""))) return;
+        int subId = imsSubscriptionId();
+        if (subId == SubscriptionManager.INVALID_SUBSCRIPTION_ID) {
+            Log.i(TAG, "IMS restart skipped: no active subscription");
+            return;
+        }
+        finishIms("superseded");
+        imsToken = token;
+        imsSubId = subId;
+        imsIdentity = state.identity();
+        imsTimerArmed = false;
+        imsRestarted = false;
+        imsRegistered = false;
+        imsWatchToken = token;
+        registerImsRegistration(subId);
+        if (imsToken.isEmpty()) return; // Already registered or IMS unavailable.
+        Log.i(TAG, "IMS restart armed for subscription " + subId);
+        maybeArmImsTimer();
+    }
+
+    private int imsSubscriptionId() {
+        int preferred = SubscriptionManager.getDefaultDataSubscriptionId();
+        if (subscriptionActive(preferred)) return preferred;
+        for (int id : callbacks.keySet())
+            if (subscriptionActive(id)) return id;
+        return SubscriptionManager.INVALID_SUBSCRIPTION_ID;
+    }
+
+    private boolean subscriptionActive(int subId) {
+        return subId != SubscriptionManager.INVALID_SUBSCRIPTION_ID
+                && subscriptions != null
+                && subscriptions.isActiveSubscriptionId(subId);
+    }
+
+    private void registerImsRegistration(int subId) {
+        unregisterImsRegistration();
+        try {
+            imsManager = ImsMmTelManager.createForSubscriptionId(subId);
+            imsCallback =
+                    new RegistrationManager.RegistrationCallback() {
+                        @Override
+                        public void onRegistered(ImsRegistrationAttributes attributes) {
+                            imsRegistered = true;
+                            finishIms(imsRestarted
+                                    ? "IMS registered after restart"
+                                    : "registered in time");
+                        }
+
+                        @Override
+                        public void onUnregistered(ImsReasonInfo info) {
+                            imsRegistered = false;
+                        }
+                    };
+            // Registration also delivers the current state immediately.
+            imsManager.registerImsRegistrationCallback(getMainExecutor(), imsCallback);
+        } catch (Exception unavailable) {
+            imsManager = null;
+            imsCallback = null;
+            Log.i(TAG, "IMS restart skipped: IMS unavailable ("
+                    + unavailable.getClass().getSimpleName() + ")");
+            finishIms("IMS unavailable");
+        }
+    }
+
+    private void unregisterImsRegistration() {
+        RegistrationManager.RegistrationCallback callback = imsCallback;
+        ImsMmTelManager manager = imsManager;
+        imsCallback = null;
+        imsManager = null;
+        if (callback == null || manager == null) return;
+        try {
+            manager.unregisterImsRegistrationCallback(callback);
+        } catch (Exception ignored) {
+        }
+    }
+
+    private void maybeArmImsTimer() {
+        if (imsToken.isEmpty() || imsTimerArmed || imsRestarted || imsRegistered) return;
+        SlotCallback callback = callbacks.get(imsSubId);
+        if (callback == null || !callback.inService) return;
+        imsTimerArmed = true;
+        main.postDelayed(imsTimeout, IMS_RESTART_DELAY_MS);
+        Log.i(TAG, "IMS registration check scheduled in 10 s");
+    }
+
+    private void runImsRestart() {
+        imsTimerArmed = false;
+        if (imsToken.isEmpty() || imsRestarted) return;
+        if (imsRegistered) {
+            finishIms("registered in time");
+            return;
+        }
+        if (!state.identity().equals(imsIdentity)) {
+            finishIms("cancelled: SIM identity changed");
+            return;
+        }
+        String skip = imsSkipReason(imsSubId);
+        if (skip != null) {
+            finishIms("skipped: " + skip);
+            return;
+        }
+        String token = imsToken;
+        try {
+            // Same path as the manual "Restart IMS registration" action.
+            new CarrierOverrides(this, imsSubId).restartIms();
+            prefs.edit().putString("ims_restart_token", token).commit();
+            imsToken = "";
+            imsRestarted = true;
+            // The status card shows the phase only while the restart is in flight.
+            setImsPhase(true);
+            main.postDelayed(imsPhaseTimeout, IMS_PHASE_TIMEOUT_MS);
+            Log.i(TAG, "IMS registration restarted (subscription " + imsSubId + ")");
+        } catch (Exception failed) {
+            Log.i(TAG, "IMS restart failed: " + failed.getClass().getSimpleName());
+            finishIms("restart failed");
+        }
+    }
+
+    private String imsSkipReason(int subId) {
+        if (imsManager == null) return "IMS service unavailable";
+        try {
+            if (!imsManager.isAdvancedCallingSettingEnabled()) return "VoLTE disabled";
+        } catch (Exception unavailable) {
+            return "VoLTE setting unavailable";
+        }
+        try {
+            CarrierConfigManager config = getSystemService(CarrierConfigManager.class);
+            android.os.PersistableBundle bundle =
+                    config == null ? null : config.getConfigForSubId(subId);
+            if (bundle != null
+                    && bundle.containsKey(CarrierConfigManager.KEY_CARRIER_VOLTE_AVAILABLE_BOOL)
+                    && !bundle.getBoolean(CarrierConfigManager.KEY_CARRIER_VOLTE_AVAILABLE_BOOL))
+                return "VoLTE unavailable for carrier";
+        } catch (Exception ignored) {
+        }
+        return null;
+    }
+
+    private void cancelImsRestart(String reason) {
+        if (!imsPhase && imsWatchToken.isEmpty() && !imsTimerArmed) return;
+        finishIms("cancelled: " + reason);
+    }
+
+    private void finishIms(String reason) {
+        boolean active = imsPhase || imsTimerArmed || !imsWatchToken.isEmpty() || imsRestarted;
+        main.removeCallbacks(imsTimeout);
+        main.removeCallbacks(imsPhaseTimeout);
+        imsTimerArmed = false;
+        imsRestarted = false;
+        imsRegistered = false;
+        imsToken = "";
+        imsWatchToken = "";
+        imsSubId = SubscriptionManager.INVALID_SUBSCRIPTION_ID;
+        imsIdentity = "";
+        unregisterImsRegistration();
+        setImsPhase(false);
+        if (active) Log.i(TAG, "IMS restart: " + reason);
+    }
+
+    private void setImsPhase(boolean active) {
+        if (imsPhase == active) return;
+        imsPhase = active;
+        prefs.edit().putBoolean("ims_restart_phase", active).apply();
+    }
+
     private void publish(McfgStatus status) {
         lastStatus = status;
         main.post(() -> {
@@ -702,6 +913,10 @@ public final class McfgCoordinatorService extends Service {
             // committed journals on heartbeat/status ticks.
             if (CoordinatorState.isRestartPending(status.state) && !status.restartAttempted
                     && contextSafe) wakeHeartbeat();
+            // A fresh transaction supersedes the previous completion's IMS check.
+            if (!status.transactionToken.isEmpty() && !imsWatchToken.isEmpty()
+                    && !status.transactionToken.equals(imsWatchToken))
+                cancelImsRestart("new transaction");
         });
         String text = status.state + (status.profileId.isEmpty() ? "" : " — " + status.profileId);
         if ("baseline_restart_pending".equals(status.state))
@@ -731,13 +946,27 @@ public final class McfgCoordinatorService extends Service {
     }
 
     private final class SlotCallback extends TelephonyCallback
-            implements TelephonyCallback.RadioPowerStateListener, TelephonyCallback.CallStateListener {
+            implements TelephonyCallback.RadioPowerStateListener,
+                    TelephonyCallback.CallStateListener,
+                    TelephonyCallback.ServiceStateListener {
         final TelephonyManager manager;
         boolean radioOn;
+        boolean inService;
         int callState = -1;
 
         SlotCallback(TelephonyManager manager) {
             this.manager = manager;
+            try {
+                inService = isInService(manager.getServiceState());
+            } catch (Exception ignored) {
+            }
+        }
+
+        @Override
+        public void onServiceStateChanged(ServiceState serviceState) {
+            if (!callbacks.containsValue(this)) return;
+            inService = isInService(serviceState);
+            if (inService) maybeArmImsTimer();
         }
 
         @Override
