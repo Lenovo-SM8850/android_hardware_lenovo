@@ -27,6 +27,7 @@ import androidx.preference.ListPreference;
 import androidx.preference.Preference;
 import androidx.preference.PreferenceCategory;
 import androidx.preference.PreferenceGroup;
+import androidx.preference.PreferenceViewHolder;
 
 import com.android.settingslib.widget.FooterPreference;
 import com.android.settingslib.widget.MainSwitchPreference;
@@ -55,11 +56,11 @@ public final class CarrierSettingsFragment extends SettingsBasePreferenceFragmen
     private SubscriptionManager subscriptions;
     private boolean listening, resumed, preferencesAlive;
     private int viewGeneration;
-    private Preference status;
+    private StatusPreference status;
     private PreferenceCategory imported;
     private Preference overridesEntry;
     private Preference importAction;
-    private boolean callIdle, transactionRunning = true, working;
+    private boolean callIdle, transactionRunning = true, working, phaseActive;
     private McfgStatus lastStatus;
     private AlertDialog importDialog;
     private String importsHome = "";
@@ -194,23 +195,55 @@ public final class CarrierSettingsFragment extends SettingsBasePreferenceFragmen
     private void showStatus(McfgStatus loader) {
         if (loader == null) {
             setStatus(getString(R.string.waiting), "");
+            setPhaseActive(false);
             return;
         }
-        String mapped = CoordinatorState.displayState(loader.state, loader.profileId,
-                loader.sourceName, loader.candidateProfileId,
-                prefs.getBoolean("automatic", false), loader.enabled);
-        String text =
-                getString(
-                        "baseline".equals(mapped)
-                                ? R.string.baseline_restart
-                                : "waiting".equals(mapped)
-                                ? R.string.waiting
-                                : "error".equals(mapped)
-                                ? R.string.status_error
-                                : "applied".equals(mapped)
-                                        ? R.string.status_applied
-                                        : R.string.status_default);
-        setStatus(text, "applied".equals(mapped) ? loader.sourceName : "");
+        boolean automatic = prefs.getBoolean("automatic", false);
+        // The IMS restart is coordinator-local state (McfgStatus is the vendor
+        // AIDL), published through the shared device-protected preferences.
+        boolean imsRestart = prefs.getBoolean("ims_restart_phase", false);
+        String working = CoordinatorState.progressState(loader.state, automatic, loader.enabled);
+        String path = "";
+        String text;
+        if (imsRestart) {
+            text = getString(R.string.status_restarting_ims);
+        } else if ("restoring".equals(working)) {
+            text = getString(R.string.status_restoring);
+        } else if ("applying".equals(working)) {
+            text = getString(R.string.status_applying);
+        } else if ("restarting".equals(working)) {
+            text = getString(R.string.baseline_restart);
+        } else {
+            String mapped = CoordinatorState.displayState(loader.state, loader.profileId,
+                    loader.sourceName, loader.candidateProfileId, automatic, loader.enabled);
+            text =
+                    getString(
+                            "baseline".equals(mapped)
+                                    ? R.string.baseline_restart
+                                    : "waiting".equals(mapped)
+                                    ? R.string.waiting
+                                    : "error".equals(mapped)
+                                    ? R.string.status_error
+                                    : "applied".equals(mapped)
+                                            ? R.string.status_applied
+                                            : R.string.status_default);
+            path = "applied".equals(mapped) ? loader.sourceName : "";
+        }
+        setStatus(text, path);
+        setPhaseActive(imsRestart || !working.isEmpty());
+    }
+
+    private void setPhaseActive(boolean active) {
+        phaseActive = active;
+        if (status != null) status.setProgressVisible(active);
+        updateSwitchEnabled();
+    }
+
+    private void updateSwitchEnabled() {
+        if (automatic == null) return;
+        // Idle calls, system user and no profile phase currently running.
+        automatic.setEnabled(callIdle && !phaseActive
+                && UserHandle.myUserId() == UserHandle.USER_SYSTEM);
     }
 
     private void setStatus(String title, String path) {
@@ -287,8 +320,11 @@ public final class CarrierSettingsFragment extends SettingsBasePreferenceFragmen
                     return true;
                 });
         getPreferenceScreen().addPreference(automatic);
-        status = action(category(R.string.notice), R.string.waiting, () -> {});
+        PreferenceCategory notice = category(R.string.notice);
+        status = new StatusPreference(requireContext());
+        status.setTitle(R.string.waiting);
         status.setSelectable(false);
+        notice.addPreference(status);
         importAction = action(
                 getPreferenceScreen(),
                 R.string.import_mbn,
@@ -342,8 +378,7 @@ public final class CarrierSettingsFragment extends SettingsBasePreferenceFragmen
     void setSwitchesEnabled(boolean idle) {
         if (!attached() || automatic == null) return;
         callIdle = idle;
-        boolean enabled = idle && UserHandle.myUserId() == UserHandle.USER_SYSTEM;
-        automatic.setEnabled(enabled);
+        updateSwitchEnabled();
         updateImportActions();
     }
 
@@ -410,6 +445,30 @@ public final class CarrierSettingsFragment extends SettingsBasePreferenceFragmen
                 });
         group.addPreference(p);
         return p;
+    }
+
+    /** Status card row that can show an M3-style indeterminate linear indicator. */
+    private static final class StatusPreference extends Preference {
+        private boolean progressVisible;
+
+        StatusPreference(Context context) {
+            super(context);
+            setLayoutResource(R.layout.preference_status);
+        }
+
+        void setProgressVisible(boolean visible) {
+            if (progressVisible == visible) return;
+            progressVisible = visible;
+            notifyChanged();
+        }
+
+        @Override
+        public void onBindViewHolder(PreferenceViewHolder holder) {
+            super.onBindViewHolder(holder);
+            View progress = holder.findViewById(R.id.status_progress);
+            if (progress != null)
+                progress.setVisibility(progressVisible ? View.VISIBLE : View.GONE);
+        }
     }
 
     private void service(String action) {

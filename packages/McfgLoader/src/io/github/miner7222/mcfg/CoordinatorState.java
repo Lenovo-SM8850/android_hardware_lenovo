@@ -121,6 +121,22 @@ final class CoordinatorState {
                 && shouldRecordApplied(profileId) && !sourceName.isEmpty();
     }
 
+    static String progressState(String transactionState, boolean automatic, boolean loaderEnabled) {
+        // Profile work in flight, keyed to the status-card labels. Keep the
+        // durable applied/error mapping in displayState unchanged.
+        if ("rolling_back".equals(transactionState)) return "restoring";
+        if ("checking".equals(transactionState)
+                || "staged".equals(transactionState)
+                || "applying".equals(transactionState)
+                || "readback_verified".equals(transactionState)
+                || "rechecking".equals(transactionState))
+            return automatic && loaderEnabled ? "applying" : "restoring";
+        if ("restart_pending".equals(transactionState)
+                || "baseline_restart_pending".equals(transactionState)
+                || "normalization_pending".equals(transactionState)) return "restarting";
+        return "";
+    }
+
     static String displayState(String transactionState, String profileId, String sourceName,
             String candidateProfileId) {
         return displayState(transactionState, profileId, sourceName, candidateProfileId, true, true);
