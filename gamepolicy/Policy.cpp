@@ -49,7 +49,20 @@ bool supported(const std::string& mode) {
     return mode == "Balance" || mode == "Savage" || mode == "PowerSave";
 }
 // The stock maximum-performance mode is named differently on some firmware; both are stored as chaoshen.
-bool parsed(const std::string& name) { return supported(name) || name == "chaoshen" || name == "Godlike"; }
+bool parsed(const std::string& name) { return supported(name) || name == "chaoshen"; }
+// The id decides what a mode is, since a stock table can carry the wrong name on one. Other ids are combined modes.
+std::string modeName(const tinyxml2::XMLElement* mode) {
+    switch (mode->IntAttribute("id")) {
+        case 0: break;
+        case 1: return "Balance";
+        case 2: return "Savage";
+        case 4: return "PowerSave";
+        case 16: return "chaoshen";
+        default: return "";
+    }
+    const std::string name = attr(mode, "name");
+    return name == "Godlike" ? "chaoshen" : name;
+}
 // These resources map to carried cgroup and KGSL nodes on both targets.
 constexpr int kUclamp = 0x40CAC000;
 constexpr int kGpuDefault = 0x42800000;
@@ -226,9 +239,11 @@ bool Policy::load(const std::string& stock, const std::string& overrides, std::s
             auto sensor = game->FirstChildElement("ThermalTempType");
             if (sensor && integer(value(sensor)) != 11) throw std::runtime_error("Unsupported sensor type");
             for (auto m = game->FirstChildElement("Mode"); m; m = m->NextSiblingElement("Mode")) {
+                const std::string name = modeName(m);
+                if (!parsed(name)) continue; // Later phases own combined modes and other controls.
                 const auto stockName = attr(m, "name");
-                if (!parsed(stockName)) continue; // Later phases own combined modes and other controls.
-                const std::string name = stockName == "Godlike" ? "chaoshen" : stockName;
+                if (stockName != name && stockName != "Godlike")
+                    diagnostics.push_back(attr(game, "pkg") + "/" + name + ": Stock table calls this mode " + stockName);
                 const bool maximum = name == "chaoshen";
                 if (maximum && modes.count(name)) continue;
                 try {

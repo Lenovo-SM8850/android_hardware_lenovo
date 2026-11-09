@@ -178,6 +178,33 @@ void real(const char* stock, const char* overlay) {
               << " diagnostics=" << policy.diagnostics.size() << '\n';
     for (const auto& diagnostic : policy.diagnostics) std::cout << "DIAGNOSTIC " << diagnostic << '\n';
 }
+void brokenEntries(const std::filesystem::path& directory) {
+    const auto stock = directory / "broken.xml", overlay = directory / "broken-overlay.xml";
+    write(stock, R"(<GameOptPolicy version="test"><PreEnv>
+      <CPU><cluster name="Gold" min="0x40800000" max="0x40804000">384000 1000000 2000000</cluster>
+      <cluster name="Prime" min="0x40800200" max="0x40804200">768000 2000000 3000000</cluster></CPU>
+      <GPU><cluster name="Gpu" min="0x42804000" max="0x42808000">1000000000 800000000 600000000</cluster></GPU>
+      </PreEnv><GamePolicy><Game pkg="default"><Mode name="Balance" id="1"/></Game>
+      <Game pkg="mislabeled"><Mode name="Savage" id="1"><ThermalSceneCode>100</ThermalSceneCode></Mode>
+      <Mode name="PowerSave" id="4"/><Mode name="Savage" id="2"><ThermalSceneCode>200</ThermalSceneCode></Mode>
+      <Mode name="Savage" id="34"><ThermalSceneCode>400</ThermalSceneCode></Mode></Game>
+      </GamePolicy></GameOptPolicy>)");
+    write(overlay, R"(<game-policy version="1"><mode id="1" profile="Balance"/><mode id="2" profile="Savage"/><mode id="3" profile="PowerSave"/>
+      <safety sensor="quiet-therm" hysteresisC="1" sampleMs="1000">
+      <resource name="Gold" ceiling="1800000" opps="unused"/>
+      <resource name="Prime" ceiling="2500000" opps="unused"/>
+      <resource name="Gpu" ceiling="900000000" opps="unused"/></safety></game-policy>)");
+    Policy policy; std::string error;
+    require(policy.load(stock, overlay, &error), error.c_str());
+    const auto& mislabeled = policy.games.at("mislabeled");
+    require(mislabeled.at("Balance").thermalCase == 100 && mislabeled.at("Savage").thermalCase == 200,
+            "Mode id did not decide a mislabeled mode");
+    const auto reported = [&](const char* text) {
+        return std::any_of(policy.diagnostics.begin(), policy.diagnostics.end(),
+                           [&](const auto& d) { return d.find(text) != std::string::npos; });
+    };
+    require(reported("mislabeled/Balance"), "A broken entry went unreported");
+}
 void synthetic(const std::filesystem::path& directory) {
     const auto stock = directory / "policy.xml", overlay = directory / "overlay.xml";
     write(stock, R"(<GameOptPolicy version="test"><PreEnv>
@@ -808,6 +835,7 @@ int main(int argc, char** argv) {
         require(argc == 6, "Usage: check WUJI_XML WUJI_OVERLAY BALDUR_XML BALDUR_OVERLAY TEMP_DIR");
         real(argv[1], argv[2]); real(argv[3], argv[4]);
         std::filesystem::create_directories(argv[5]);
+        brokenEntries(argv[5]);
         synthetic(argv[5]);
         feedback(argv[5]);
         scenes(argv[5]);
