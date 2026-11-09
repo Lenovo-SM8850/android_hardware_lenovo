@@ -147,6 +147,11 @@ class PenService : Service() {
                 if (info.identified) {
                     haptics.touchIdentity(info.vid, info.pid, info.address, info.controllerType)
                 }
+                // TP-only pens have no BAS channel; stock uses the NVT INFO battery field instead.
+                if (info.bleSupported && info.address != null && info.battery != null &&
+                    info.address !in connectedHidAddresses) {
+                    battery.reportTouchLevel(info.address, info.battery)
+                }
                 if (info.identified) selectPenType(info)
                 if (!powerManager.isInteractive) return@post
                 if (!info.identified) {
@@ -740,7 +745,8 @@ class PenService : Service() {
 
     private data class PenInfo(val identity: String, val vid: Int, val pid: Int,
         val address: String?,
-        val bleSupported: Boolean, val identified: Boolean, val controllerType: Int? = null) {
+        val bleSupported: Boolean, val identified: Boolean, val controllerType: Int? = null,
+        val battery: Int? = null) {
         companion object {
             fun parseAddress(mac: String?): String? = mac?.uppercase(Locale.ROOT)?.takeIf {
                 it.matches(Regex("(?:[0-9A-F]{2}:){5}[0-9A-F]{2}")) &&
@@ -763,7 +769,8 @@ class PenService : Service() {
                 val fields = info?.split(';') ?: return null
                 if (fields.size != 5) return null
                 val type = fields[0].toIntOrNull()?.takeIf { it in 0..255 && it != 170 } ?: return null
-                fields[1].toIntOrNull()?.takeIf { it in 0..255 } ?: return null
+                val second = fields[1].toIntOrNull()?.takeIf { it in 0..255 } ?: return null
+                val battery = second.takeIf { it in 0..100 }
                 val pid = fields[2].removePrefix("0x").toIntOrNull(16)?.takeIf { it in 0..65535 } ?: return null
                 val vid = fields[3].removePrefix("0x").toIntOrNull(16)?.takeIf { it in 0..65535 } ?: return null
                 val sn = fields[4].removePrefix("0x").toIntOrNull(16)?.takeIf { it in 0..0xffffff } ?: return null
@@ -777,7 +784,8 @@ class PenService : Service() {
                     6 -> pid == 0x622e
                     else -> false
                 }
-                return PenInfo("$type:$pid:$vid:$sn", vid, pid, address, supported, identified, type)
+                return PenInfo("$type:$pid:$vid:$sn", vid, pid, address, supported, identified, type,
+                    battery)
             }
         }
     }
