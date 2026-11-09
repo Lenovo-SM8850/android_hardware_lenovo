@@ -5,4 +5,6 @@
     <string name="config_edgeGridNode" translatable="false"></string>
     <string name="config_edgeGridValue" translatable="false"></string>
     <bool name="config_supportsEdgeGrid">false</bool>
+    <!-- Input device names of the panel pen, turned off while a game blocks pen input. -->
+    <string-array name="config_panelPenDevices" translatable="false" />
 </resources>

@@ -2,11 +2,12 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 <resources>
     <overlayable name="TouchConfig">
-        <policy type="vendor|product|signature">
+        <policy type="vendor|odm|product|signature">
             <item type="string" name="config_rotationNode" />
             <item type="string" name="config_edgeGridNode" />
             <item type="string" name="config_edgeGridValue" />
             <item type="bool" name="config_supportsEdgeGrid" />
+            <item type="array" name="config_panelPenDevices" />
         </policy>
     </overlayable>
 </resources>

@@ -7,4 +7,19 @@ android_app {
     platform_apis: true,
     privileged: true,
     system_ext_specific: true,
+    required: [
+        "privapp-permissions-io.github.miner7222.touch",
+    ],
+    static_libs: [
+        "org.lineageos.platform.internal",
+        "vendor.lenovo.hardware.touchpolicy-V1-java",
+    ],
+}
+
+prebuilt_etc {
+    name: "privapp-permissions-io.github.miner7222.touch",
+    system_ext_specific: true,
+    src: "privapp-permissions-io.github.miner7222.touch.xml",
+    sub_dir: "permissions",
+    filename_from_src: true,
 }
