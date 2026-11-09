@@ -13,7 +13,9 @@
 #include <stdexcept>
 #include <sys/stat.h>
 #include <unistd.h>
+#if __has_include(<sys/random.h>)
 #include <sys/random.h>
+#endif
 #include <fstream>
 #include <iomanip>
 
@@ -26,11 +28,21 @@ int64_t nowMs() {
     return std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::steady_clock::now().time_since_epoch()).count();
 }
+#if !__has_include(<sys/random.h>)
+// The host sysroot of the policy checks predates getrandom().
+ssize_t getrandom(void* buffer, size_t size, unsigned) {
+    const int fd = open("/dev/urandom", O_RDONLY | O_CLOEXEC);
+    if (fd < 0) return -1;
+    const auto n = read(fd, buffer, size);
+    close(fd);
+    return n;
+}
+#endif
 std::string newEpoch() {
     std::array<unsigned char, 16> bytes{};
     size_t done = 0;
     while (done < bytes.size()) {
-        const auto n = ::getrandom(bytes.data() + done, bytes.size() - done, 0);
+        const auto n = getrandom(bytes.data() + done, bytes.size() - done, 0);
         if (n < 0 && errno == EINTR) continue;
         if (n <= 0) throw std::runtime_error("Cannot generate built-in epoch");
         done += n;
