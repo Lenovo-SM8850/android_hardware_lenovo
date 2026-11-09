@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 android_app {
-    name: "LenovoTouchscreenRotation",
+    name: "LenovoTouch",
     srcs: ["src/**/*.java"],
     certificate: "platform",
     platform_apis: true,
