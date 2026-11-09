@@ -3,5 +3,5 @@
     SPDX-License-Identifier: Apache-2.0
 -->
 <resources>
-    <string name="app_name">Touchscreen rotation</string>
+    <string name="app_name">Touch</string>
 </resources>

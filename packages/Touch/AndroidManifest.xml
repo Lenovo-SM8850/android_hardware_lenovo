@@ -3,10 +3,10 @@
     SPDX-License-Identifier: Apache-2.0
 -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    package="io.github.miner7222.touchrotation"
+    package="io.github.miner7222.touch"
     android:sharedUserId="android.uid.system">
     <application
-        android:name=".TouchscreenRotationApplication"
+        android:name=".TouchApplication"
         android:label="@string/app_name"
         android:persistent="true"
         android:directBootAware="true"

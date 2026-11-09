@@ -2,9 +2,9 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-package io.github.miner7222.touchrotation;
+package io.github.miner7222.touch;
 
-import android.app.Application;
+import android.content.Context;
 import android.hardware.display.DisplayManager;
 import android.os.Handler;
 import android.os.HandlerThread;
@@ -15,36 +15,37 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 
-/** Applies the internal display rotation to Lenovo edge rejection. No settings UI. */
-public final class TouchscreenRotationApplication extends Application
-        implements DisplayManager.DisplayListener {
-    private static final String TAG = "LenovoTouchscreenRotation";
+/** Applies the internal display rotation to the edge rejection nodes. No settings UI. */
+final class TouchRotationController implements DisplayManager.DisplayListener {
+    private static final String TAG = "LenovoTouchRotation";
     private static final long RETRY_DELAY_MS = 1000;
     private static final int MAX_RETRIES = 30;
 
-    private String mRotationNode;
-    private String mEdgeGridNode;
-    private String mEdgeGridValue;
-    private boolean mSupportsEdgeGrid;
-    private DisplayManager mDisplayManager;
-    private Handler mHandler;
+    private final String mRotationNode;
+    private final String mEdgeGridNode;
+    private final String mEdgeGridValue;
+    private final boolean mSupportsEdgeGrid;
+    private final DisplayManager mDisplayManager;
+    private final Handler mHandler;
+
     // All state below is confined to mHandler.
     private int mAppliedRotation = -1;
     private int mRetryCount;
     private boolean mDisplayOn;
     private final Runnable mApply = this::applyRotation;
 
-    @Override
-    public void onCreate() {
-        super.onCreate();
-        mRotationNode = getString(R.string.config_rotationNode);
-        mEdgeGridNode = getString(R.string.config_edgeGridNode);
-        mEdgeGridValue = getString(R.string.config_edgeGridValue);
-        mSupportsEdgeGrid = getResources().getBoolean(R.bool.config_supportsEdgeGrid);
+    TouchRotationController(Context context) {
+        mRotationNode = context.getString(R.string.config_rotationNode);
+        mEdgeGridNode = context.getString(R.string.config_edgeGridNode);
+        mEdgeGridValue = context.getString(R.string.config_edgeGridValue);
+        mSupportsEdgeGrid = context.getResources().getBoolean(R.bool.config_supportsEdgeGrid);
         HandlerThread thread = new HandlerThread(TAG);
         thread.start();
         mHandler = new Handler(thread.getLooper());
-        mDisplayManager = getSystemService(DisplayManager.class);
+        mDisplayManager = context.getSystemService(DisplayManager.class);
+    }
+
+    void start() {
         mDisplayManager.registerDisplayListener(this, mHandler);
         mHandler.post(mApply);
     }
@@ -73,9 +74,7 @@ public final class TouchscreenRotationApplication extends Application
 
     private void applyRotation() {
         mHandler.removeCallbacks(mApply);
-        if (mRotationNode.isEmpty()) {
-            return;
-        }
+        if (mRotationNode.isEmpty()) return;
         Display display = mDisplayManager.getDisplay(Display.DEFAULT_DISPLAY);
         if (display == null || display.getState() != Display.STATE_ON) {
             mDisplayOn = false;
@@ -86,27 +85,21 @@ public final class TouchscreenRotationApplication extends Application
             Log.e(TAG, "Unexpected rotation: " + rotation);
             return;
         }
-        if (mDisplayOn && mAppliedRotation == rotation) {
-            return;
-        }
+        if (mDisplayOn && mAppliedRotation == rotation) return;
         mDisplayOn = true;
         try {
             writeNode(mRotationNode, Integer.toString(rotation));
             // Keep sidebar/taskbar exemptions disabled; the driver buffer is 16 bytes.
-            if (mSupportsEdgeGrid) {
-                writeNode(mEdgeGridNode, mEdgeGridValue);
-            }
+            if (mSupportsEdgeGrid) writeNode(mEdgeGridNode, mEdgeGridValue);
             mAppliedRotation = rotation;
             mRetryCount = 0;
         } catch (IOException e) {
             mAppliedRotation = -1;
-            if (mRetryCount++ == 0) {
-                Log.w(TAG, "Cannot apply Lenovo rotation", e);
-            }
+            if (mRetryCount++ == 0) Log.w(TAG, "Cannot apply display rotation", e);
             if (mRetryCount <= MAX_RETRIES) {
                 mHandler.postDelayed(mApply, RETRY_DELAY_MS);
             } else {
-                Log.e(TAG, "Lenovo rotation retries exhausted; awaiting display change");
+                Log.e(TAG, "Rotation retries exhausted; awaiting display change");
             }
         }
     }
