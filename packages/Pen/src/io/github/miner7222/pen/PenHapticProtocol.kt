@@ -6,7 +6,6 @@ import android.view.MotionEvent
 import java.util.UUID
 
 internal object PenHapticProtocol {
-    const val SETTING = "pen_writing_haptics_enabled"
     const val VID = 0x17ef
     const val PID = 0x622e
     val SERVICE = uuid("00000000")
@@ -18,10 +17,14 @@ internal object PenHapticProtocol {
     val TIMING = UUID.fromString("0000fe41-cc7a-482a-984a-7f2ed5b3e512")
     val CCCD = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
     fun stop() = byteArrayOf(0, 0, 0, 0)
-    fun contact(tool: Int): ByteArray = when (tool) {
-        MotionEvent.TOOL_TYPE_STYLUS -> byteArrayOf(0x21, 3, 1, 1)
-        MotionEvent.TOOL_TYPE_ERASER -> byteArrayOf(0x23, 3, 1, 0)
-        else -> throw IllegalArgumentException("Unsupported haptic tool")
+    /** BLE continuous packet: [wave, level, friction, toolFlag]. Stock level range is 0..5. */
+    fun contact(tool: Int, level: Int): ByteArray {
+        val strength = level.coerceIn(0, 5).toByte()
+        return when (tool) {
+            MotionEvent.TOOL_TYPE_STYLUS -> byteArrayOf(0x21, strength, 1, 1)
+            MotionEvent.TOOL_TYPE_ERASER -> byteArrayOf(0x23, strength, 1, 0)
+            else -> throw IllegalArgumentException("Unsupported haptic tool")
+        }
     }
     fun writeType(c: BluetoothGattCharacteristic): Int? = when {
         c.properties and BluetoothGattCharacteristic.PROPERTY_WRITE != 0 ->

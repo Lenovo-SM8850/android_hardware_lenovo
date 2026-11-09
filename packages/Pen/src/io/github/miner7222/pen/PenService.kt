@@ -3,6 +3,7 @@
  */
 package io.github.miner7222.pen
 
+import android.app.ActivityManager
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -252,6 +253,7 @@ class PenService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        PenSettings.migrate(this, ActivityManager.getCurrentUser())
         cap.recover()
         // Channel importance cannot be raised once created, so replace the old low channel
         notifications.deleteNotificationChannel(LEGACY_CHANNEL)

@@ -10,7 +10,6 @@ import android.hardware.display.DisplayManager
 import android.os.Handler
 import android.os.PowerManager
 import android.os.UserHandle
-import android.provider.Settings
 import android.util.Log
 import android.view.Display
 import android.view.InputDevice
@@ -52,7 +51,8 @@ internal class PenHapticController(private val context: Context, private val han
     fun start() {
         if (!supported || destroyed) return
         tp.request(false)
-        context.contentResolver.registerContentObserver(Settings.Secure.getUriFor(PenHapticProtocol.SETTING),
+        context.contentResolver.registerContentObserver(
+            android.provider.Settings.Secure.getUriFor(PenSettings.WRITING_HAPTICS),
             false, observer, UserHandle.USER_ALL)
         displays.registerDisplayListener(displayListener, handler)
     }
@@ -108,8 +108,7 @@ internal class PenHapticController(private val context: Context, private val han
         val device = try { address?.takeUnless { it in disconnected }?.let { adapter?.getRemoteDevice(it) }
             ?.takeIf { adapter?.isEnabled == true && it.bondState == BluetoothDevice.BOND_BONDED }
         } catch (_: RuntimeException) { null }
-        val enabled = device != null && displayReady() && Settings.Secure.getIntForUser(
-            context.contentResolver, PenHapticProtocol.SETTING, 0, user) != 0
+        val enabled = device != null && displayReady() && PenSettings.writingHaptics(context, user)
         if (selected != device?.address || active != enabled) {
             stop("selection/enablement")
             session?.hapticInterest(true, false)
@@ -146,8 +145,13 @@ internal class PenHapticController(private val context: Context, private val han
         contactDevice = event.deviceId
         stroke++
         if (DEBUG) Log.d(TAG, "down user=$user display=${event.displayId} stroke=$stroke tool=$tool VID=17ef PID=622e")
-        session?.contact(PenHapticProtocol.contact(tool))
+        session?.contact(PenHapticProtocol.contact(effectiveTool(event), hapticLevel()))
     }
+
+    private fun effectiveTool(event: MotionEvent): Int =
+        event.getToolType(event.actionIndex)
+
+    private fun hapticLevel() = PenSettings.hapticLevel(context, user)
 
     private fun stop(reason: String) {
         stroke++
