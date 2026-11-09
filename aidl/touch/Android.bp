@@ -10,7 +10,10 @@ cc_binary {
         default: false,
     }),
     vintf_fragments: select(soong_config_variable("lenovotouch", "high_touch_polling_rate"), {
-        true: ["vendor.lineage.touch-service.lenovo.xml"],
+        true: [
+            "vendor.lineage.touch-service.lenovo.xml",
+            "vendor.lenovo.hardware.touchpolicy.xml",
+        ],
         default: [],
     }),
     vendor: true,
@@ -18,11 +21,13 @@ cc_binary {
     init_rc: ["vendor.lineage.touch-service.lenovo.rc"],
     srcs: [
         "HighTouchPollingRate.cpp",
+        "TouchPolicy.cpp",
         "service.cpp",
     ],
     shared_libs: [
         "libbase",
         "libbinder_ndk",
+        "vendor.lenovo.hardware.touchpolicy-V1-ndk",
         "vendor.lineage.touch-V1-ndk",
     ],
     cflags: [
@@ -37,6 +42,18 @@ cc_binary {
         default: [],
     }) + select(soong_config_variable("lenovotouch", "high_report_rate_disable"), {
         any @ value: ["-DHIGH_REPORT_RATE_DISABLE=\"" + value + "\""],
+        default: [],
+    }) + select(soong_config_variable("lenovotouchpolicy", "report_threshold_text"), {
+        true: ["-DTOUCH_REPORT_THRESHOLD_TEXT=1"],
+        default: [],
+    }) + select(soong_config_variable("lenovotouchpolicy", "game_edge_text"), {
+        true: ["-DTOUCH_GAME_EDGE_TEXT=1"],
+        default: [],
+    }) + select(soong_config_variable("lenovotouchpolicy", "support_pen_linking"), {
+        any @ value: ["-DTOUCH_SUPPORT_PEN_LINKING=" + value],
+        default: [],
+    }) + select(soong_config_variable("lenovotouchpolicy", "support_pen_session_off"), {
+        any @ value: ["-DTOUCH_SUPPORT_PEN_SESSION_OFF=" + value],
         default: [],
     }),
 }

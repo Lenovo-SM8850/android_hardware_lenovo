@@ -1,2 +1,4 @@
 # Domain, transition and AIDL service label come from device/lineage/sepolicy.
 allow hal_lineage_touch_default vendor_proc_nvt_polling:file rw_file_perms;
+# The touch policy interface writes the session and pen nodes.
+allow hal_lineage_touch_default proc_tp:file rw_file_perms;
