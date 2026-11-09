@@ -9,3 +9,11 @@ on post-fs-data
     chmod 0644 /proc/panel_direction
     chown system system /proc/edge_grid_zone
     chmod 0644 /proc/edge_grid_zone
+    chown system system /proc/report_threshold
+    chmod 0660 /proc/report_threshold
+    chown system system /proc/game_mode
+    chmod 0660 /proc/game_mode
+    chown system system /proc/game_edge
+    chmod 0660 /proc/game_edge
+    chown system system /proc/support_pen
+    chmod 0660 /proc/support_pen

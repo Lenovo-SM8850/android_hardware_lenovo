@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: Apache-2.0
+hal_attribute(touch_policy)
+type hal_touch_policy_service, service_manager_type, hal_service_type;
+
+# The Lineage touch HAL process serves this interface. Its domain is declared
+# after this policy, so grant its server attribute instead of a new one.
+allow hal_lineage_touch_server hal_touch_policy_service:service_manager { add find };
+neverallow { domain -hal_lineage_touch_server } hal_touch_policy_service:service_manager add;
+allow hal_touch_policy_client hal_touch_policy_service:service_manager find;
+binder_call(hal_touch_policy_client, hal_lineage_touch_server)
+# The HAL notifies its client when the effective pen state changes.
+binder_call(hal_lineage_touch_server, hal_touch_policy_client)

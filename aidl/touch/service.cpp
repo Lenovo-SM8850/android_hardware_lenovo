@@ -13,16 +13,22 @@
 #include <string>
 
 #include "HighTouchPollingRate.h"
+#include "TouchPolicy.h"
 
+using aidl::vendor::lenovo::hardware::touchpolicy::TouchPolicy;
 using aidl::vendor::lineage::touch::HighTouchPollingRate;
 
 int main() {
     ABinderProcess_setThreadPoolMaxThreadCount(0);
-    const auto service = ndk::SharedRefBase::make<HighTouchPollingRate>();
-    const std::string instance = std::string(HighTouchPollingRate::descriptor) + "/default";
-    const binder_status_t status =
-            AServiceManager_addService(service->asBinder().get(), instance.c_str());
-    CHECK_EQ(status, STATUS_OK) << "Failed to register " << instance;
+    const auto polling = ndk::SharedRefBase::make<HighTouchPollingRate>();
+    const std::string pollingInstance = std::string(HighTouchPollingRate::descriptor) + "/default";
+    binder_status_t status =
+            AServiceManager_addService(polling->asBinder().get(), pollingInstance.c_str());
+    CHECK_EQ(status, STATUS_OK) << "Failed to register " << pollingInstance;
+    const auto policy = ndk::SharedRefBase::make<TouchPolicy>();
+    const std::string policyInstance = std::string(TouchPolicy::descriptor) + "/default";
+    status = AServiceManager_addService(policy->asBinder().get(), policyInstance.c_str());
+    CHECK_EQ(status, STATUS_OK) << "Failed to register " << policyInstance;
     ABinderProcess_joinThreadPool();
     return EXIT_FAILURE;
 }

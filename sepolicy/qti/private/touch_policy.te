@@ -1,0 +1,3 @@
+# SPDX-License-Identifier: Apache-2.0
+# The persistent touch policy app is the only service client.
+hal_client_domain(system_app, hal_touch_policy)
