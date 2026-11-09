@@ -178,6 +178,19 @@ void real(const char* stock, const char* overlay) {
               << " diagnostics=" << policy.diagnostics.size() << '\n';
     for (const auto& diagnostic : policy.diagnostics) std::cout << "DIAGNOSTIC " << diagnostic << '\n';
 }
+// Checks the table a device ships, whatever its data version. real() pins counts of fixed tables.
+void shipped(const char* stock, const char* overlay) {
+    Policy policy; std::string error;
+    require(policy.load(stock, overlay, &error), error.c_str());
+    require(policy.aliasesValid(&error), "Device overlay contains dangling alias");
+    for (const auto& diagnostic : policy.diagnostics)
+        require(diagnostic.find(": Skipped: ") == std::string::npos, diagnostic.c_str());
+    policy.resolve(sample(stock), {6, 2});
+    std::cout << "SHIPPED_OK version=" << policy.version << " games=" << policy.games.size()
+              << " diagnostics=" << policy.diagnostics.size() << '\n';
+    for (const auto& diagnostic : policy.diagnostics)
+        if (diagnostic.find("Stock table calls") != std::string::npos) std::cout << "DIAGNOSTIC " << diagnostic << '\n';
+}
 void brokenEntries(const std::filesystem::path& directory) {
     const auto stock = directory / "broken.xml", overlay = directory / "broken-overlay.xml";
     write(stock, R"(<GameOptPolicy version="test"><PreEnv>
@@ -838,6 +851,7 @@ int main(int argc, char** argv) {
     try {
         if (argc == 5 && std::string(argv[1]) == "--archive-protocol")
             return archiveProtocol(argv[2], argv[3], argv[4]);
+        if (argc == 4 && std::string(argv[1]) == "--shipped") { shipped(argv[2], argv[3]); return 0; }
         require(argc == 6, "Usage: check WUJI_XML WUJI_OVERLAY BALDUR_XML BALDUR_OVERLAY TEMP_DIR");
         real(argv[1], argv[2]); real(argv[3], argv[4]);
         std::filesystem::create_directories(argv[5]);
