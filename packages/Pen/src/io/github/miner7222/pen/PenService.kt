@@ -143,7 +143,10 @@ class PenService : Service() {
                 // Timing/status events need not contain a valid identity report.
                 haptics.timingChanged()
                 if (info == null) return@post
-                haptics.touchIdentity(info.vid, info.pid, info.address, info.controllerType)
+                // Startup/idle placeholders are not evidence of a different pen model.
+                if (info.identified) {
+                    haptics.touchIdentity(info.vid, info.pid, info.address, info.controllerType)
+                }
                 if (info.identified) selectPenType(info)
                 if (!powerManager.isInteractive) return@post
                 if (!info.identified) {
@@ -240,7 +243,7 @@ class PenService : Service() {
                         if (pairing) finishPairing(R.string.pen_bluetooth_off) else stopPairing()
                         stopDiscovery()
                     } else {
-                        startDiscovery()
+                        checkPenDevice()
                         pen?.takeIf { powerManager.isInteractive && it.bleSupported }?.address?.let {
                             attemptedAddress = null
                             pair(it)
@@ -393,14 +396,16 @@ class PenService : Service() {
             inputReceiver = object : InputEventReceiver(newMonitor.inputChannel, mainLooper) {
                 override fun onInputEvent(event: InputEvent) {
                     try {
-                        if (event is MotionEvent) haptics.motion(event)
-                        if (event is MotionEvent && inputName.isNotEmpty() && event.device?.name == inputName &&
-                            event.isFromSource(InputDevice.SOURCE_STYLUS) && powerManager.isInteractive &&
-                            event.actionMasked != MotionEvent.ACTION_CANCEL) {
-                            markActivity()
+                        if (event is MotionEvent) {
+                            haptics.motion(event)
+                            if (inputName.isNotEmpty() && event.device?.name == inputName &&
+                                event.isFromSource(InputDevice.SOURCE_STYLUS) &&
+                                powerManager.isInteractive &&
+                                event.actionMasked != MotionEvent.ACTION_CANCEL) {
+                                markActivity()
+                            }
                         }
                     } finally {
-                        // Observe only: never pilfer pointers or consume the app's pen events.
                         finishInputEvent(event, false)
                     }
                 }
