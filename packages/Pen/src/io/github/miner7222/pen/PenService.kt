@@ -24,9 +24,11 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.hardware.input.InputManager
 import android.os.Handler
+import android.os.HandlerThread
 import android.os.IBinder
 import android.os.ParcelUuid
 import android.os.PowerManager
+import android.os.ServiceManager
 import android.os.SystemProperties
 import android.os.UEventObserver
 import android.util.Log
@@ -37,6 +39,7 @@ import android.view.InputEventReceiver
 import android.view.InputMonitor
 import android.view.MotionEvent
 import java.util.Locale
+import vendor.lenovo.hardware.touchpolicy.ITouchPolicy
 
 class PenService : Service() {
     private val handler by lazy { Handler(mainLooper) }
@@ -77,6 +80,20 @@ class PenService : Service() {
     private var pairingAddress: String? = null
     private var pairing = false
     private var pairingShown = false
+    private var touchPolicy: ITouchPolicy? = null
+    private var policyThread: HandlerThread? = null
+    private var policyHandler: Handler? = null
+    private var lastPenState = ITouchPolicy.PEN_DISCONNECTED
+    private var reportedPenState = -1
+    private var policySendPending = false
+    private val policyLock = Any()
+    private val policyDeath = IBinder.DeathRecipient {
+        policyHandler?.post {
+            touchPolicy = null
+            reportedPenState = -1
+            schedulePolicySend()
+        }
+    }
     private var status: Int? = null
     private var destroyed = false
     private var sessionActive = false
@@ -262,6 +279,8 @@ class PenService : Service() {
     override fun onCreate() {
         super.onCreate()
         PenSettings.migrate(this, ActivityManager.getCurrentUser())
+        policyThread = HandlerThread("PenTouchPolicy").apply { start() }
+        policyHandler = Handler(policyThread!!.looper)
         cap.recover()
         // Channel importance cannot be raised once created, so replace the old low channel
         notifications.deleteNotificationChannel(LEGACY_CHANNEL)
@@ -323,17 +342,71 @@ class PenService : Service() {
         }.filterNotNull(), connectedHidAddresses)
         if (!penSupportBridge) return
         val value = when {
-            connectedPen || connectedHidAddresses.isNotEmpty() -> "1"
-            touchPairing || reconnectTimeouts.isNotEmpty() -> "2"
-            else -> "0"
+            connectedPen || connectedHidAddresses.isNotEmpty() -> ITouchPolicy.PEN_CONNECTED
+            touchPairing || reconnectTimeouts.isNotEmpty() -> ITouchPolicy.PEN_LINKING
+            else -> ITouchPolicy.PEN_DISCONNECTED
+        }
+        synchronized(policyLock) { lastPenState = value }
+        schedulePolicySend()
+    }
+
+    private fun schedulePolicySend() {
+        val handler = policyHandler ?: return
+        synchronized(policyLock) {
+            if (policySendPending) return
+            policySendPending = true
+        }
+        handler.post { sendPenState() }
+    }
+
+    /** Runs on the policy thread; never blocks the service or input callbacks. */
+    private fun sendPenState() {
+        val handler = policyHandler ?: return
+        val value = synchronized(policyLock) { lastPenState }
+        if (touchPolicy != null && reportedPenState == value) {
+            synchronized(policyLock) { policySendPending = false }
+            return
+        }
+        var policy = touchPolicy
+        if (policy == null) {
+            val binder = ServiceManager.waitForDeclaredService(
+                "${ITouchPolicy.DESCRIPTOR}/default")
+            if (binder == null) {
+                retryPolicySend(handler)
+                return
+            }
+            try {
+                binder.linkToDeath(policyDeath, 0)
+            } catch (e: Exception) {
+                Log.w(TAG, "Cannot link to the touch policy HAL", e)
+                retryPolicySend(handler)
+                return
+            }
+            policy = ITouchPolicy.Stub.asInterface(binder)
+            if (policy == null) {
+                binder.unlinkToDeath(policyDeath, 0)
+                retryPolicySend(handler)
+                return
+            }
+            touchPolicy = policy
         }
         try {
-            if (SystemProperties.get(PEN_SUPPORT_PROPERTY) != value) {
-                SystemProperties.set(PEN_SUPPORT_PROPERTY, value)
-            }
-        } catch (e: RuntimeException) {
-            Log.w(TAG, "Cannot report pen support $value", e)
+            policy.setPenState(value)
+            reportedPenState = value
+            synchronized(policyLock) { policySendPending = false }
+            if (synchronized(policyLock) { lastPenState } != value) schedulePolicySend()
+        } catch (e: Exception) {
+            // Retry after a HAL restart; the state is kept for the next attempt.
+            touchPolicy = null
+            reportedPenState = -1
+            Log.w(TAG, "Cannot report pen state $value", e)
+            retryPolicySend(handler)
         }
+    }
+
+    private fun retryPolicySend(handler: Handler) {
+        synchronized(policyLock) { policySendPending = false }
+        handler.postDelayed({ schedulePolicySend() }, 2000)
     }
 
     private fun isKnownPen(device: BluetoothDevice): Boolean {
@@ -740,6 +813,7 @@ class PenService : Service() {
         gattSessions.destroy()
         cap.destroy()
         handler.removeCallbacksAndMessages(null)
+        policyThread?.quitSafely()
         super.onDestroy()
     }
 
@@ -794,7 +868,6 @@ class PenService : Service() {
         private const val TAG = "LenovoPenService"
         private val PAIRING_UUID = ParcelUuid.fromString("0000f9ea-0000-1000-8000-00805f9b34fb")
         private const val PEN_TYPE_PROPERTY = "sys.lenovo.pen.type"
-        private const val PEN_SUPPORT_PROPERTY = "sys.lenovo.pen.support"
         private const val PEN_IDLE_MS = 10000L
         private const val PAIR_TIMEOUT_MS = 30000L
         private const val RECONNECT_TIMEOUT_MS = 15000L

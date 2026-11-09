@@ -17,6 +17,7 @@ android_app {
     static_libs: [
         "androidx.preference_preference",
         "SettingsLib",
+        "vendor.lenovo.hardware.touchpolicy-V1-java",
         "vendor.lineage.touch-V1-java",
     ],
     optimize: {
