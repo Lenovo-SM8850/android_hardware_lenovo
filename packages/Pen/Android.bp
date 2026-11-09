@@ -15,6 +15,8 @@ android_app {
         "privapp-permissions-io.github.miner7222.pen",
     ],
     static_libs: [
+        "androidx.preference_preference",
+        "SettingsLib",
         "vendor.lineage.touch-V1-java",
     ],
     optimize: {

@@ -15,4 +15,12 @@
     <string name="pen_battery_low_title">Pen battery low</string>
     <string name="pen_battery_low">%1$d%% left. Charge the pen soon.</string>
     <string name="pen_battery_critical">%1$d%% left. Charge the pen now.</string>
+    <string name="pen_writing_haptics">Writing vibration</string>
+    <string name="pen_writing_haptics_summary">Vibrate as you write in supported apps.</string>
+    <string name="pen_haptic_level">Vibration strength</string>
+    <string name="pen_haptic_level_1">Lightest</string>
+    <string name="pen_haptic_level_2">Light</string>
+    <string name="pen_haptic_level_3">Medium</string>
+    <string name="pen_haptic_level_4">Strong</string>
+    <string name="pen_haptic_level_5">Strongest</string>
 </resources>
