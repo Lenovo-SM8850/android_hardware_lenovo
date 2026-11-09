@@ -140,10 +140,11 @@ internal class PenGattSession(private val context: Context, private val device: 
     private fun ensureConnected() {
         if (destroyed || blocked || terminating || gatt != null || (!enabled && battery == null)) return
         try {
-            gatt = device.connectGatt(context, false, callback, BluetoothDevice.TRANSPORT_LE,
+            // Auto-connect matches stock: the controller links the pen when it comes back in
+            // range, so the first stroke after idle wakes the battery/haptic session in time.
+            gatt = device.connectGatt(context, true, callback, BluetoothDevice.TRANSPORT_LE,
                 BluetoothDevice.PHY_LE_1M_MASK, handler)
             if (gatt == null) fail("connect submission")
-            else handler.postDelayed(connectionDeadline, 15000)
         } catch (e: RuntimeException) { fail("connect: $e") }
     }
 
@@ -423,6 +424,8 @@ internal class PenGattSession(private val context: Context, private val device: 
     private val callback = object : BluetoothGattCallback() {
         override fun onConnectionStateChange(client: BluetoothGatt, status: Int, newState: Int) = event(client) {
             if (status == BluetoothGatt.GATT_SUCCESS && newState == BluetoothProfile.STATE_CONNECTED) {
+                // Auto-connect may take arbitrarily long; discovery itself stays bounded.
+                handler.postDelayed(connectionDeadline, 15000)
                 if (!client.discoverServices()) fail("discover submission")
             } else if (status != BluetoothGatt.GATT_SUCCESS || newState == BluetoothProfile.STATE_DISCONNECTED) {
                 fail("disconnect status=$status")
