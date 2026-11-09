@@ -32,6 +32,7 @@ internal class PenBattery(private val context: Context, private val handler: Han
     private val preferences = context.createDeviceProtectedStorageContext()
         .getSharedPreferences("pen_battery", Context.MODE_PRIVATE)
     private val pens = mutableMapOf<String, Pen>()
+    private val touchLevels = mutableMapOf<String, Int>()
     private val listeners = mutableMapOf<Int, InputManager.InputDeviceBatteryListener>()
     private val batteryStates = mutableMapOf<Int, BatteryState>()
 
@@ -88,7 +89,10 @@ internal class PenBattery(private val context: Context, private val handler: Han
         connected.entries.groupBy({ it.value }, { it.key }).forEach { (address, ids) ->
             val pro2 = devices.any { it.id in ids && it.vendorId == PenHapticProtocol.VID &&
                 it.productId == PenHapticProtocol.PID }
-            val pen = pens.getOrPut(address) { Pen(adapter!!.getRemoteDevice(address), pro2) }
+            val pen = pens.getOrPut(address) {
+                touchLevels.remove(address)
+                Pen(adapter!!.getRemoteDevice(address), pro2)
+            }
             pen.ids = ids
             ids.filter { it !in listeners }.forEach { id ->
                 val listener = InputManager.InputDeviceBatteryListener { _, _, state ->
@@ -105,6 +109,24 @@ internal class PenBattery(private val context: Context, private val handler: Han
                 }
             }
             pen.refresh()
+        }
+    }
+
+    /** TP-only pens have no BAS channel; stock mirrors the NVT INFO battery for them. */
+    fun reportTouchLevel(address: String, level: Int) {
+        if (level !in 0..100 || adapter?.isEnabled != true || address in pens) return
+        if (touchLevels[address] == level) return
+        try {
+            val device = adapter?.getRemoteDevice(address) ?: return
+            if (device.bondState != BluetoothDevice.BOND_BONDED) return
+            // Record ownership before publishing so a restart can invalidate stale metadata.
+            if (preferences.edit().putBoolean("published:$address", true).commit() &&
+                device.setMetadata(BluetoothDevice.METADATA_MAIN_BATTERY,
+                    level.toString().toByteArray(Charsets.UTF_8))) {
+                touchLevels[address] = level
+            }
+        } catch (e: RuntimeException) {
+            Log.w(TAG, "Cannot publish touch pen battery", e)
         }
     }
 
@@ -132,6 +154,7 @@ internal class PenBattery(private val context: Context, private val handler: Han
         listeners.keys.toList().forEach { removeListener(it) }
         pens.values.forEach { it.close() }
         pens.clear()
+        touchLevels.clear()
     }
 
     private fun invalidatePublishedLevels(address: String? = null) {
