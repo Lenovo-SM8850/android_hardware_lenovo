@@ -225,6 +225,8 @@ bool Policy::load(const std::string& stock, const std::string& overrides, std::s
         auto policies = root->FirstChildElement("GamePolicy");
         if (!policies) throw std::runtime_error("Missing GamePolicy");
         for (auto game = policies->FirstChildElement("Game"); game; game = game->NextSiblingElement("Game")) {
+            // A broken entry only costs that game its own profile. It runs on the default one.
+            try {
             std::map<std::string, Mode> modes;
             Mode defaults;
             threadOptions(game, defaults, diagnostics, attr(game, "pkg"));
@@ -320,6 +322,10 @@ bool Policy::load(const std::string& stock, const std::string& overrides, std::s
             if (!source.key.empty()) {
                 if (source.key == "default") source.name.clear();
                 sources.push_back(std::move(source));
+            }
+            } catch (const std::exception& e) {
+                const char* pkg = game->Attribute("pkg");
+                diagnostics.push_back(std::string(pkg ? pkg : "missing") + ": Skipped: " + e.what());
             }
         }
         if (!games.count("default")) throw std::runtime_error("Missing default game");
