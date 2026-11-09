@@ -188,6 +188,9 @@ void brokenEntries(const std::filesystem::path& directory) {
       <Game pkg="mislabeled"><Mode name="Savage" id="1"><ThermalSceneCode>100</ThermalSceneCode></Mode>
       <Mode name="PowerSave" id="4"/><Mode name="Savage" id="2"><ThermalSceneCode>200</ThermalSceneCode></Mode>
       <Mode name="Savage" id="34"><ThermalSceneCode>400</ThermalSceneCode></Mode></Game>
+      <Game pkg="no.balance"><Mode name="Savage" id="2"/></Game>
+      <Game pkg="bad.sensor"><ThermalTempType>9</ThermalTempType><Mode name="Balance" id="1"/></Game>
+      <Game pkg="after"><Mode name="Balance" id="1"/></Game>
       </GamePolicy></GameOptPolicy>)");
     write(overlay, R"(<game-policy version="1"><mode id="1" profile="Balance"/><mode id="2" profile="Savage"/><mode id="3" profile="PowerSave"/>
       <safety sensor="quiet-therm" hysteresisC="1" sampleMs="1000">
@@ -199,11 +202,14 @@ void brokenEntries(const std::filesystem::path& directory) {
     const auto& mislabeled = policy.games.at("mislabeled");
     require(mislabeled.at("Balance").thermalCase == 100 && mislabeled.at("Savage").thermalCase == 200,
             "Mode id did not decide a mislabeled mode");
+    require(!policy.games.count("no.balance") && !policy.games.count("bad.sensor") && policy.games.count("after"),
+            "A broken game was kept or stopped the following ones");
     const auto reported = [&](const char* text) {
         return std::any_of(policy.diagnostics.begin(), policy.diagnostics.end(),
                            [&](const auto& d) { return d.find(text) != std::string::npos; });
     };
-    require(reported("mislabeled/Balance"), "A broken entry went unreported");
+    require(reported("mislabeled/Balance") && reported("no.balance") && reported("bad.sensor"),
+            "A broken entry went unreported");
 }
 void synthetic(const std::filesystem::path& directory) {
     const auto stock = directory / "policy.xml", overlay = directory / "overlay.xml";
