@@ -45,6 +45,7 @@ interface IGameTuning {
   boolean getGraphicsSupport();
   vendor.lenovo.hardware.gametuning.GraphicsOptions getGraphicsOptions(String packageName);
   void setGraphicsOptions(String packageName, in vendor.lenovo.hardware.gametuning.GraphicsOptions options);
+  void setGppState(int userId, String packageName, int flags);
   const int BASE_BALANCED = 1;
   const int BASE_PERFORMANCE = 2;
   const int BASE_BATTERY = 3;
@@ -93,4 +94,6 @@ interface IGameTuning {
   const int DIAGNOSIS_PERFORMANCE_LIMITED = 4;
   const int DIAGNOSIS_THERMAL_LIMITED = 5;
   const int DIAGNOSIS_MIXED_LIMITS = 6;
+  const int GPP_SR = 32;
+  const int GPP_FI = 64;
 }
