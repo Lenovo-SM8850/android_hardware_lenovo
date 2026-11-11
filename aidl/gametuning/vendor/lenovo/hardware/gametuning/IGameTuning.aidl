@@ -96,4 +96,8 @@ interface IGameTuning {
     boolean getGraphicsSupport();
     GraphicsOptions getGraphicsOptions(String packageName);
     void setGraphicsOptions(String packageName, in GraphicsOptions options);
+    const int GPP_SR = 32;
+    const int GPP_FI = 64;
+    // Runtime state only; never creates or changes a user tuning.
+    void setGppState(int userId, String packageName, int flags);
 }
