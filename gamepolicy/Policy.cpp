@@ -45,23 +45,41 @@ Band frequencies(const tinyxml2::XMLElement* parent, double temperature = 0) {
     }
     return band;
 }
-bool supported(const std::string& mode) {
+bool baseSupported(const std::string& mode) {
     return mode == "Balance" || mode == "Savage" || mode == "PowerSave";
 }
-// The stock maximum-performance mode is named differently on some firmware; both are stored as chaoshen.
+std::string gppName(const std::string& base, int flags) {
+    switch (flags & kGppMask) {
+        case kGppSr: return "SR_" + base;
+        case kGppFi: return "FI_" + base;
+        case kGppMask: return "SR_FI_" + base;
+        default: return base;
+    }
+}
+bool supported(const std::string& name) {
+    if (baseSupported(name)) return true;
+    for (const auto* base : {"Balance", "Savage", "PowerSave"})
+        for (int flags : {kGppSr, kGppFi, kGppMask})
+            if (name == gppName(base, flags)) return true;
+    return false;
+}
 bool parsed(const std::string& name) { return supported(name) || name == "chaoshen"; }
-// The id decides what a mode is, since a stock table can carry the wrong name on one. Other ids are combined modes.
+// IDs are authoritative even when a carried row has a mismatched label.
 std::string modeName(const tinyxml2::XMLElement* mode) {
-    switch (mode->IntAttribute("id")) {
-        case 0: break;
-        case 1: return "Balance";
-        case 2: return "Savage";
-        case 4: return "PowerSave";
-        case 16: return "chaoshen";
+    const int id = mode->IntAttribute("id");
+    if (id == 0) {
+        const std::string name = attr(mode, "name");
+        return name == "Godlike" ? "chaoshen" : name;
+    }
+    std::string base;
+    switch (id & ~kGppMask) {
+        case 1: base = "Balance"; break;
+        case 2: base = "Savage"; break;
+        case 4: base = "PowerSave"; break;
+        case 16: return id == 16 ? "chaoshen" : "";
         default: return "";
     }
-    const std::string name = attr(mode, "name");
-    return name == "Godlike" ? "chaoshen" : name;
+    return gppName(base, id);
 }
 // These resources map to carried cgroup and KGSL nodes on both targets.
 constexpr int kUclamp = 0x40CAC000;
@@ -197,7 +215,7 @@ bool Policy::load(const std::string& stock, const std::string& overrides, std::s
             throw std::runtime_error("Missing hard ceiling/OPP path");
         for (auto m = config->FirstChildElement("mode"); m; m = m->NextSiblingElement("mode")) {
             const auto name = attr(m, "profile");
-            if (!supported(name)) throw std::runtime_error("Unsupported mode mapping");
+            if (!baseSupported(name)) throw std::runtime_error("Unsupported mode mapping");
             overlay.modes[integer(attr(m, "id"))] = name;
         }
         for (auto a = config->FirstChildElement("alias"); a; a = a->NextSiblingElement("alias")) {
@@ -242,7 +260,7 @@ bool Policy::load(const std::string& stock, const std::string& overrides, std::s
             if (sensor && integer(value(sensor)) != 11) throw std::runtime_error("Unsupported sensor type");
             for (auto m = game->FirstChildElement("Mode"); m; m = m->NextSiblingElement("Mode")) {
                 const std::string name = modeName(m);
-                if (!parsed(name)) continue; // Later phases own combined modes and other controls.
+                if (!parsed(name)) continue;
                 const auto stockName = attr(m, "name");
                 if (stockName != name && stockName != "Godlike")
                     diagnostics.push_back(attr(game, "pkg") + "/" + name + ": Stock table calls this mode " + stockName);
@@ -466,8 +484,8 @@ void Policy::resolve(const Opps& actual, const std::array<int, 2>& coreCounts, u
     }
 }
 
-Selection Policy::select(const std::string& pkg, int mode) const {
-    if (auto runtime = archiveRuntime()) return runtime->select(pkg, mode);
+Selection Policy::select(const std::string& pkg, int mode, int gpp, bool userProfile) const {
+    if (auto runtime = archiveRuntime()) return runtime->select(pkg, mode, gpp, userProfile);
     std::string profile = pkg;
     bool threads = true;
     auto alias = overlay.aliases.find(pkg);
@@ -479,9 +497,10 @@ Selection Policy::select(const std::string& pkg, int mode) const {
     const auto& modes = games.at(profile);
     auto mapped = overlay.modes.find(mode);
     std::string name = mapped == overlay.modes.end() ? "Balance" : mapped->second;
-    auto selected = modes.find(name);
+    auto selected = userProfile ? modes.end() : modes.find(gppName(name, gpp));
+    if (selected == modes.end()) selected = modes.find(name);
     if (selected == modes.end()) selected = modes.find("Balance");
-    return {&selected->second, profile, threads};
+    return {&selected->second, profile, threads, selected->first};
 }
 
 std::vector<int> Policy::ladder(int r) const {
