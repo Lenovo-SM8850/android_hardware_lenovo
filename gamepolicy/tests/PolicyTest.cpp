@@ -46,7 +46,7 @@ void real(const char* stock, const char* overlay) {
     size_t sceneRows = 0, metadata = 0;
     for (const auto& [pkg, list] : policy.sceneLists) metadata += list.size();
     for (const auto& [pkg, modes] : policy.games) for (const auto& [name, mode] : modes) {
-        sceneRows += name == "chaoshen" ? 0 : mode.scenes.size(); // The maximum mode is a tuning base only.
+        sceneRows += (name == "chaoshen" || name.rfind("SR_", 0) == 0 || name.rfind("FI_", 0) == 0) ? 0 : mode.scenes.size(); // The maximum mode is a tuning base only.
         require(mode.scenes.size() == modes.at("Balance").scenes.size(), "Profile scene inheritance lost");
         for (const auto& [id, scene] : mode.scenes) {
             require(scene.timeMs > 0 && id >= 0 && id <= 100000, "Invalid real scene row");
@@ -72,7 +72,7 @@ void real(const char* stock, const char* overlay) {
     size_t hints = 0, bound = 0, rt = 0, delays = 0, fps = 0;
     std::map<int, size_t> accepted, dropped;
     for (const auto& [pkg, modes] : policy.games) for (const auto& [name, mode] : modes) {
-        if (name == "chaoshen") continue;
+        if (name == "chaoshen" || name.rfind("SR_", 0) == 0 || name.rfind("FI_", 0) == 0) continue;
         hints += mode.perfHints.size(); bound += mode.bindCore.size(); rt += mode.schedulers.size();
         delays += mode.delayMs > 0;
         fps += Policy::fpsEnabled(mode, pkg);
@@ -86,7 +86,8 @@ void real(const char* stock, const char* overlay) {
     }
     for (const auto& diagnostic : policy.diagnostics) {
         auto pos = diagnostic.find("/PerfHint 0x");
-        if (pos != std::string::npos && diagnostic.find("/chaoshen/") == std::string::npos) ++dropped[std::stoi(diagnostic.substr(pos + 10), nullptr, 16)];
+        if (pos != std::string::npos && diagnostic.find("/chaoshen/") == std::string::npos &&
+            diagnostic.find("/SR_") == std::string::npos && diagnostic.find("/FI_") == std::string::npos) ++dropped[std::stoi(diagnostic.substr(pos + 10), nullptr, 16)];
     }
     require(hints > 100 && bound > 200 && rt >= 6 && delays >= 3, "Missing phase 2 real coverage");
     if (policy.version == "20260907")
@@ -109,7 +110,7 @@ void real(const char* stock, const char* overlay) {
         std::cout << "PERF_DROP opcode=0x" << std::hex << opcode << std::dec << " count=" << count << '\n';
     int clamped = 0;
     for (const auto& [pkg, definitions] : unresolved.games) for (const auto& [name, mode] : definitions) {
-        if (name == "chaoshen") continue;
+        if (name == "chaoshen" || name.rfind("SR_", 0) == 0 || name.rfind("FI_", 0) == 0) continue;
         for (size_t i = 0; i < mode.bands.size(); ++i) for (int r = 0; r < 3; ++r) {
             const auto& before = mode.bands[i].bounds[r];
             const int last = actual[r].size() - 1;
@@ -846,14 +847,53 @@ void threadRecovery(const std::filesystem::path& directory) {
             "Invalid journal flag accepted");
     std::cout << "THREAD_RECOVERY_OK cpuset-fallback error-retention subset-restore journal-flags old-version-discard\n";
 }
+void gppVariants(const char* stock, const char* overlay) {
+    Policy p; std::string error;
+    require(p.load(stock, overlay, &error), error.c_str());
+    p.resolve(sample(stock), {6, 2});
+    const std::string pkg = "com.miHoYo.Nap";
+    const auto& rows = p.games.at(pkg);
+    for (auto [flags, name] : std::vector<std::pair<int, std::string>>{
+            {kGppSr, "SR_Savage"}, {kGppFi, "FI_Savage"}, {kGppMask, "SR_FI_Savage"}}) {
+        const auto selected = p.select(pkg, 2, flags);
+        require(selected.row == name && selected.mode == &rows.at(name), "GPP variant selection");
+        const auto got = Policy::evaluate(*selected.mode, 40.0, 0, -1, 1.0);
+        const auto expected = Policy::evaluate(rows.at(name), 40.0, 0, -1, 1.0);
+        require(got.thermalCase == expected.thermalCase && got.resources == expected.resources,
+                "GPP row thermal and frequency ranges");
+        require(p.select(pkg, 2, flags, true).mode == p.select(pkg, 2).mode,
+                "User tuning must not inherit a GPP variant");
+    }
+    Policy missing = p;
+    missing.games.at(pkg).erase("SR_FI_Savage");
+    require(missing.select(pkg, 2, kGppMask).row == "Savage", "Missing combined variant falls back to base, not SR");
+    require(p.select("com.HoYoverse.Nap", 2, kGppMask).row == "Savage", "Exact package without variants keeps base");
+    require(p.select("com.miHoYo.GenshinImpact", 1).row == "Balance", "Savage label on ID 1 remains Balance");
+    const auto& odd = p.games.at("com.netease.yyslscn");
+    require(p.select("com.netease.yyslscn", 2, kGppSr).mode == &odd.at("SR_Savage") &&
+            p.select("com.netease.yyslscn", 2, kGppMask).mode == &odd.at("SR_FI_Savage"),
+            "FI_Savage labels on IDs 34 and 98 retain ID semantics");
+    std::cout << "GPP_VARIANTS_OK ids fallback odd-labels user-precedence thermal-ranges\n";
+}
+void modeRules(const char* executable) {
+    const auto tool = std::filesystem::absolute(executable).parent_path() / "lenovo-gpp-mode-check";
+    const auto child = fork();
+    require(child >= 0, "Cannot start shared mode-rule tests");
+    if (child == 0) { execl(tool.c_str(), tool.c_str(), static_cast<char*>(nullptr)); _exit(127); }
+    int status = 0;
+    require(waitpid(child, &status, 0) == child && WIFEXITED(status) && WEXITSTATUS(status) == 0,
+            "Shared UI mode-rule tests failed");
+}
 } // namespace
 int main(int argc, char** argv) {
     try {
         if (argc == 5 && std::string(argv[1]) == "--archive-protocol")
             return archiveProtocol(argv[2], argv[3], argv[4]);
+        if (argc == 4 && std::string(argv[1]) == "--gpp") { gppVariants(argv[2], argv[3]); return 0; }
         if (argc == 4 && std::string(argv[1]) == "--shipped") { shipped(argv[2], argv[3]); return 0; }
         require(argc == 6, "Usage: check WUJI_XML WUJI_OVERLAY BALDUR_XML BALDUR_OVERLAY TEMP_DIR");
         real(argv[1], argv[2]); real(argv[3], argv[4]);
+        modeRules(argv[0]);
         std::filesystem::create_directories(argv[5]);
         brokenEntries(argv[5]);
         synthetic(argv[5]);

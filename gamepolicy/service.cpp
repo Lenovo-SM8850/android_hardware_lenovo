@@ -675,9 +675,9 @@ class Service final : public BnGamePolicy {
     // ---- Selection ---------------------------------------------------------------------------
     // Pure with respect to the session: a record that is not enabled or not allowed yields the stock mode.
     Resolved resolveWith(const std::optional<TuningRecord>& record, const std::string& pkg, int mode,
-                         bool allowTuned) const {
+                         bool allowTuned, int gpp = 0) const {
         Resolved r;
-        r.stock = mPolicy.select(pkg, mode);
+        r.stock = mPolicy.select(pkg, mode, gpp, record && record->enabled);
         r.profile = r.stock.profile;
         r.placement = r.stock.threadPlacement;
         const TuningRecord* applied = nullptr;
@@ -703,18 +703,20 @@ class Service final : public BnGamePolicy {
         }
         return r;
     }
-    Resolved resolveStored(int userId, const std::string& pkg, int mode, bool allowTuned) {
+    Resolved resolveStored(int userId, const std::string& pkg, int mode, bool allowTuned, int gpp = 0) {
         std::optional<TuningRecord> record;
         {
             std::lock_guard store(mStoreMutex);
             record = mStore.find(userId, pkg, mode);
         }
-        return resolveWith(record, pkg, mode, allowTuned);
+        return resolveWith(record, pkg, mode, allowTuned, gpp);
     }
     // Applies the stock selection or the stored tuning to the session. mMutex held.
     void select(int userId, const std::string& pkg, int mode) {
         mScene.cancel();   // Scene rows point into the mode that is about to be replaced.
-        Resolved r = resolveStored(userId, pkg, mode, true);
+        const auto feature = mGpp.find({userId, pkg});
+        const int gpp = feature == mGpp.end() ? 0 : feature->second;
+        Resolved r = resolveStored(userId, pkg, mode, true, gpp);
         if (!r.error.empty() && r.error != "disabled") LOG(WARNING) << "Ignoring tuning " << pkg << ": " << r.error;
         mTunedMode.reset();
         mTunedMode = std::move(r.tuned);
@@ -725,7 +727,9 @@ class Service final : public BnGamePolicy {
         mView = std::move(r.view);
         mBand = -1;   // A band index belongs to the mode that produced it.
         mLoggedMode = nullptr;
-        LOG(INFO) << "Game tuning profile=" << mSelection.profile << " tuned=" << bool(mTunedMode);
+        LOG(INFO) << "Game tuning profile=" << mSelection.profile << " tuned=" << bool(mTunedMode)
+                  << " row=" << (mTunedMode ? "user" : r.stock.row) << " gpp=" << gpp
+                  << " case=" << mSelection.mode->thermalCase;
     }
     // A stored tuning changed; apply it when it belongs to the running session.
     void reapply(int userId, const std::string& pkg, int mode) {
@@ -1284,6 +1288,7 @@ class Service final : public BnGamePolicy {
     bool mSensorFailed = false;
 
     // Tuning state (mMutex).
+    std::map<std::pair<int, std::string>, int> mGpp;
     std::optional<Mode> mTunedMode;    // Backs mSelection.mode while a tuning is applied.
     int mProfileGeneration = 0;
     int mProfileMode = 0;              // Retained with mView across a pause/resume.
@@ -1490,6 +1495,24 @@ class TuningBinder final : public gt::BnGameTuning {
             mCore->mProbeSince.erase(key);
         }
         mCore->reapply(userId, packageName, mode);
+        return ndk::ScopedAStatus::ok();
+    }
+    ndk::ScopedAStatus setGppState(int32_t userId, const std::string& packageName, int32_t flags) override {
+        if (!callerFor(userId)) return denied();
+        if (!validPackage(packageName) || flags < 0 || (flags & ~kGppMask))
+            return invalid("Invalid package or GPP flags");
+        std::optional<int> mode;
+        {
+            std::lock_guard lock(mCore->mMutex);
+            const auto key = std::make_pair(userId, packageName);
+            const auto it = mCore->mGpp.find(key);
+            if ((it == mCore->mGpp.end() ? 0 : it->second) == flags) return ndk::ScopedAStatus::ok();
+            if (flags) mCore->mGpp[key] = flags;
+            else mCore->mGpp.erase(key);
+            if (mCore->mSession && mCore->mSession->userId == userId &&
+                mCore->mSession->packageName == packageName) mode = mCore->mSession->mode;
+        }
+        if (mode) mCore->reapply(userId, packageName, *mode);
         return ndk::ScopedAStatus::ok();
     }
     ndk::ScopedAStatus setRecordingArmed(int32_t userId, const std::string& packageName, bool armed) override {

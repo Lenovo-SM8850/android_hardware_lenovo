@@ -16,10 +16,9 @@ cc_binary {
     compile_multilib: "64",
     srcs: ["service.cpp", "QspmClient.cpp"],
     generated_headers: ["gamepolicy_qspm_headers"],
-    static_libs: ["liblenovo_gamepolicy"],
+    static_libs: ["liblenovo_gamepolicy", "vendor.lenovo.hardware.gametuning-V2-ndk"],
     shared_libs: [
         "io.github.miner7222.gamepolicy-V2-ndk",
-        "vendor.lenovo.hardware.gametuning-V2-ndk",
         "android.hardware.common-V2-ndk",
         "//vendor/lenovo/sm8850-common:vendor.qti.qspmhal-V1-ndk",
         "libcutils", "libbinder_ndk", "libbase", "liblog", "libdl", "libtinyxml2",
@@ -32,6 +31,7 @@ cc_binary {
 
 cc_binary_host {
     name: "lenovo-gamepolicy-check",
+    required: ["lenovo-gpp-mode-check"],
     srcs: [
         "tests/PolicyTest.cpp",
         "tests/TuningTest.cpp",
@@ -64,4 +64,11 @@ genrule {
         "$(location aidl) --lang=ndk --structured --version=1 " +
         "--hash=d43cd1309bd4375f541a73ac5fe6b77ad29ee729 --stability=vintf --min_sdk_version=29 " +
         "-I$${f%/vendor/qti/qspmhal/*} -h $(genDir)/include -o $(genDir)/src $$f;; esac; done",
+}
+
+java_binary_host {
+    name: "lenovo-gpp-mode-check",
+    srcs: [":gamespace_gpp_mode_rules", "tests/GppModeRulesTest.kt"],
+    main_class: "io.github.miner7222.gamespace.GppModeRulesTestKt",
+    static_libs: ["kotlin-stdlib"],
 }

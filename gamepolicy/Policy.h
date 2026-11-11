@@ -12,8 +12,9 @@
 namespace tinyxml2 { class XMLDocument; }
 
 namespace gamepolicy {
-bool validDropWindow(int lower, int upper);
 bool allowedCase(int code);
+bool validDropWindow(int lower, int upper);
+constexpr int kGppSr = 32, kGppFi = 64, kGppMask = kGppSr | kGppFi;
 using Opps = std::array<std::vector<int>, 3>; // Gold/Prime kHz, GPU Hz (descending).
 struct Bounds { int floor = -1; int ceiling = -1; };
 // bounds are request-encoded (CPU MHz, GPU table index); units hold the same row as kHz/Hz, -1 = none.
@@ -56,7 +57,7 @@ struct Overlay {
     int sampleMs = 1000;
 };
 struct Source { std::string key; std::string name; std::vector<std::string> packages; };
-struct Selection { const Mode* mode; std::string profile; bool threadPlacement; };
+struct Selection { const Mode* mode; std::string profile; bool threadPlacement; std::string row = {}; };
 struct Decision { int thermalCase = 0; int band = -1; std::vector<int> resources; };
 // Reserved v1 source-key protocol: @builtin/current/<epoch>/<generation> is a catalogue marker;
 // @builtin/pending requests a later retry without advancing any app checkpoint.
@@ -111,7 +112,7 @@ class Policy {
     bool load(const std::string& stock, const std::string& overrides, std::string* error);
     // Resolve every index once, before any session can request a resource.
     void resolve(const Opps& actual, const std::array<int, 2>& coreCounts = {}, uint64_t present = 0);
-    Selection select(const std::string& package, int mode) const;
+    Selection select(const std::string& package, int mode, int gpp = 0, bool userProfile = false) const;
     bool aliasesValid(std::string* error) const;
     static size_t band(const Mode& mode, double temperature, int previous, double hysteresis);
     static size_t linearBand(const Mode& mode, double temperature, int previous, double hysteresis);
