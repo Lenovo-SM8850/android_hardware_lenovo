@@ -5,6 +5,8 @@
 package io.github.miner7222.touch;
 
 import android.app.Application;
+import android.os.Handler;
+import android.os.HandlerThread;
 
 /** Runs the display rotation writer and the game touch policy in one persistent process. */
 public final class TouchApplication extends Application {
@@ -14,9 +16,12 @@ public final class TouchApplication extends Application {
     @Override
     public void onCreate() {
         super.onCreate();
-        mRotation = new TouchRotationController(this);
+        HandlerThread thread = new HandlerThread("LenovoTouch");
+        thread.start();
+        Handler handler = new Handler(thread.getLooper());
+        mPolicy = new TouchPolicyController(this, handler);
+        mRotation = new TouchRotationController(this, handler, mPolicy::onRotationChanged);
         mRotation.start();
-        mPolicy = new TouchPolicyController(this);
         mPolicy.start();
     }
 }

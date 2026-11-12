@@ -7,7 +7,6 @@ package io.github.miner7222.touch;
 import android.content.Context;
 import android.hardware.display.DisplayManager;
 import android.os.Handler;
-import android.os.HandlerThread;
 import android.util.Log;
 import android.view.Display;
 
@@ -27,6 +26,7 @@ final class TouchRotationController implements DisplayManager.DisplayListener {
     private final boolean mSupportsEdgeGrid;
     private final DisplayManager mDisplayManager;
     private final Handler mHandler;
+    private final Runnable mOnRotationChanged;
 
     // All state below is confined to mHandler.
     private int mAppliedRotation = -1;
@@ -34,14 +34,13 @@ final class TouchRotationController implements DisplayManager.DisplayListener {
     private boolean mDisplayOn;
     private final Runnable mApply = this::applyRotation;
 
-    TouchRotationController(Context context) {
+    TouchRotationController(Context context, Handler handler, Runnable onRotationChanged) {
         mRotationNode = context.getString(R.string.config_rotationNode);
         mEdgeGridNode = context.getString(R.string.config_edgeGridNode);
         mEdgeGridValue = context.getString(R.string.config_edgeGridValue);
         mSupportsEdgeGrid = context.getResources().getBoolean(R.bool.config_supportsEdgeGrid);
-        HandlerThread thread = new HandlerThread(TAG);
-        thread.start();
-        mHandler = new Handler(thread.getLooper());
+        mHandler = handler;
+        mOnRotationChanged = onRotationChanged;
         mDisplayManager = context.getSystemService(DisplayManager.class);
     }
 
@@ -93,6 +92,8 @@ final class TouchRotationController implements DisplayManager.DisplayListener {
             if (mSupportsEdgeGrid) writeNode(mEdgeGridNode, mEdgeGridValue);
             mAppliedRotation = rotation;
             mRetryCount = 0;
+            Log.d(TAG, "Applied panel direction=" + rotation);
+            mOnRotationChanged.run();
         } catch (IOException e) {
             mAppliedRotation = -1;
             if (mRetryCount++ == 0) Log.w(TAG, "Cannot apply display rotation", e);

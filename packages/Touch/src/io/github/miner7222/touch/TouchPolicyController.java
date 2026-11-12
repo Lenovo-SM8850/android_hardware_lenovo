@@ -13,7 +13,6 @@ import android.content.IntentFilter;
 import android.database.ContentObserver;
 import android.hardware.display.DisplayManager;
 import android.os.Handler;
-import android.os.HandlerThread;
 import android.os.IBinder;
 import android.os.RemoteException;
 import android.os.ServiceManager;
@@ -161,13 +160,11 @@ final class TouchPolicyController {
         }
     };
 
-    TouchPolicyController(Context context) {
+    TouchPolicyController(Context context, Handler handler) {
         mContext = context;
         mResolver = context.getContentResolver();
         mDisplayManager = context.getSystemService(DisplayManager.class);
-        HandlerThread thread = new HandlerThread(TAG);
-        thread.start();
-        mHandler = new Handler(thread.getLooper());
+        mHandler = handler;
         mPenGate = new PenDeviceGate(context, mHandler);
         mHardware = LineageHardwareManager.getInstance(context);
     }
@@ -275,6 +272,13 @@ final class TouchPolicyController {
         }
     }
 
+    void onRotationChanged() {
+        // Rotation and policy share this handler; resend after the direction write.
+        if (!mSessionActive) return;
+        mNeedsSync = true;
+        update();
+    }
+
     private void update() {
         final int user = currentUser();
         if (mUser != user) {
@@ -310,11 +314,16 @@ final class TouchPolicyController {
         final boolean highPollingOn =
                 Settings.Secure.getIntForUser(mResolver, KEY_HIGH_POLLING, 1, user) == 1;
         final int highPolling = !penInput && highPollingOn ? 1 : 0;
+        final int pollingFeature = LineageHardwareManager.FEATURE_HIGH_TOUCH_POLLING_RATE;
         final boolean changed = mNeedsSync || !mSessionActive || tap != mAppliedTap ||
                 move != mAppliedMove || edge != mAppliedEdge ||
-                penInput != mAppliedPenInput;
+                penInput != mAppliedPenInput || highPolling != mAppliedHighPolling ||
+                mHardware.get(pollingFeature) != (highPolling == 1);
         if (changed) {
+            mNeedsSync = true;
             journalHighPolling(user);
+            // Game parameters depend on the report rate, even on a same-value resend.
+            if (!applyHighPolling(user, highPolling)) return;
             try {
                 TouchSessionConfig config = new TouchSessionConfig();
                 config.tapSensitivity = tap;
@@ -323,6 +332,8 @@ final class TouchPolicyController {
                 hal.setSessionPenInput(penInput);
                 hal.setSession(config);
                 mPenGate.setBlocked(!penInput);
+                Log.d(TAG, "Applied session tap=" + tap + " move=" + move +
+                        " edge=" + edge + " penInput=" + penInput);
             } catch (UnsupportedOperationException e) {
                 Log.w(TAG, "Touch node write failed; retrying", e);
                 scheduleRetry();
@@ -341,7 +352,6 @@ final class TouchPolicyController {
             mNeedsSync = false;
             resetRetry();
         }
-        applyHighPolling(user, highPolling);
     }
 
     /** Returns true when the HAL restored the idle state. */
@@ -356,6 +366,7 @@ final class TouchPolicyController {
         try {
             hal.endSession();
             hal.setSessionPenInput(false);
+            Log.d(TAG, "Cleared touch session");
         } catch (UnsupportedOperationException e) {
             Log.w(TAG, "Touch node restore failed; retrying", e);
             scheduleRetry();
@@ -406,6 +417,7 @@ final class TouchPolicyController {
         final int feature = LineageHardwareManager.FEATURE_HIGH_TOUCH_POLLING_RATE;
         mHardware.set(feature, mRestorePolling == 1);
         if (mHardware.get(feature) != (mRestorePolling == 1)) return false;
+        Log.d(TAG, "Restored report rate=" + mRestorePolling);
         if (!Settings.Secure.putIntForUser(mResolver, KEY_RESTORE_POLLING, -1,
                 mJournalUser)) return false;
         mJournaled = false;
@@ -434,13 +446,12 @@ final class TouchPolicyController {
         update();
     }
 
-    private void applyHighPolling(int user, int value) {
+    private boolean applyHighPolling(int user, int value) {
         // The controller's polling mode also selects pen compatibility: high reporting
         // blocks the pen, so pen input forces it off. Keep the user's polling choice in
         // the journal; with the switch off the input device gate alone blocks the pen.
         final int feature = LineageHardwareManager.FEATURE_HIGH_TOUCH_POLLING_RATE;
         final boolean enabled = value == 1;
-        if (value == mAppliedHighPolling && mHardware.get(feature) == enabled) return;
         // Do not rely on the IME's optional settings observer to apply the firmware mode.
         // The AIDL setter returns the requested state, including false on disable.
         // Read back the mode to decide whether the write succeeded.
@@ -448,14 +459,16 @@ final class TouchPolicyController {
         if (mHardware.get(feature) != enabled) {
             Log.w(TAG, "Cannot apply the pen firmware mode");
             scheduleRetry();
-            return;
+            return false;
         }
         if (!LineageSettings.System.putIntForUser(mResolver,
                 LineageSettings.System.HIGH_TOUCH_POLLING_RATE_ENABLE, value, user)) {
             scheduleRetry();
-            return;
+            return false;
         }
         mAppliedHighPolling = value;
+        Log.d(TAG, "Applied report rate=" + value);
+        return true;
     }
 
     private static int clamp(int value, int minimum, int maximum) {
