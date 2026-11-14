@@ -41,6 +41,7 @@
         <item>com.newskyer.draw</item>
         <item>com.nineton.shouzhang</item>
         <item>com.orion.notein</item>
+        <item>com.orion.notein.global</item>
         <item>com.penly.planner.notes.tasks.reminders</item>
         <item>com.steadfastinnovation.android.projectpapyrus</item>
         <item>com.tophatch.concepts</item>
@@ -61,7 +62,8 @@
         <item>note.notepad.todo.notebook</item>
         <item>org.mightyfrog.android.simplenotepad</item>
     </string-array>
-    <!-- Stock pen_haptic_packages list (ZUI_17.5.10.362); overlays may trim it per device.
+    <!-- Stock pen_haptic_packages list (ZUI_17.5.10.362) plus the overseas variants of its
+         China-market apps; overlays may trim it per device.
          Writing haptics only run while the foreground app is listed here. -->
         <string-array name="config_penHapticPackages" translatable="false">
         <item>net.huanci.hsjpro</item>
@@ -91,6 +93,7 @@
         <item>com.liubowang.drawingboard</item>
         <item>com.kdanmobile.android.pdfreader.google.pad</item>
         <item>com.jideos.jnotes</item>
+        <item>com.jideos.jnotes.overseas.google</item>
         <item>com.infraware.office.link</item>
         <item>com.hlg.daydaytobusiness</item>
         <item>com.google.android.keep</item>
@@ -108,6 +111,7 @@
         <item>com.adsk.sketchbook</item>
         <item>com.pick.sketchbook</item>
         <item>cn.canva.editor</item>
+        <item>com.canva.editor</item>
         <item>jp.ne.ibis.ibispaintx.app</item>
         <item>com.tayasui.sketches</item>
         <item>jp.ne.ibis.ibispaint.app</item>
@@ -116,6 +120,7 @@
         <item>com.topstack.kilonotes.pad</item>
         <item>com.delgeo.desygner</item>
         <item>com.orion.notein</item>
+        <item>com.orion.notein.global</item>
         <item>com.adobe.reader</item>
         <item>com.officetoolsapps.document.reader.editor</item>
         <item>com.adobe.fas</item>
