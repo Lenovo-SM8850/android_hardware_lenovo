@@ -469,7 +469,12 @@ class PenService : Service() {
     private fun startInputMonitor() {
         if (destroyed || monitor != null) return
         try {
-            val newMonitor = inputManager.monitorGestureInput("LenovoPen", Display.DEFAULT_DISPLAY)
+            val newMonitor = try {
+                inputManager.monitorGestureInput("LenovoPen", Display.DEFAULT_DISPLAY,
+                    InputManager.MONITOR_FLAG_DO_NOT_PILFER)
+            } catch (_: NoSuchMethodError) {
+                inputManager.monitorGestureInput("LenovoPen", Display.DEFAULT_DISPLAY)
+            }
             monitor = newMonitor
             inputReceiver = object : InputEventReceiver(newMonitor.inputChannel, mainLooper) {
                 override fun onInputEvent(event: InputEvent) {
