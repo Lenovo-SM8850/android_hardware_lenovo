@@ -21,12 +21,15 @@ import android.os.HandlerThread;
 import android.os.IBinder;
 import android.os.RemoteException;
 import android.os.ServiceManager;
+import android.os.SystemClock;
 import android.os.UserHandle;
 import android.provider.Settings;
 import android.util.Log;
 import android.view.Display;
 
 import com.android.internal.display.BrightnessSynchronizer;
+
+import java.util.function.Consumer;
 
 /** Feeds panel brightness to the Dolby Vision daemon during playback. */
 public class DolbyVisionService extends Service {
@@ -48,6 +51,12 @@ public class DolbyVisionService extends Service {
     // Log the "daemon not available" retry only now and then instead of once a second.
     private static final int RECONNECT_LOG_INTERVAL = 30;
 
+    // An HDR/SDR ratio above this means the panel is boosted for HDR content.
+    private static final float HDR_BOOST_RATIO = 1.01f;
+    // How long a change of the HDR boost stays the reason of the next brightness change; the
+    // ratio listener and the brightness listener are not ordered.
+    private static final long HDR_BOOST_WINDOW_MS = 1000;
+
     private HandlerThread mThread;
     private Handler mHandler;
     private DisplayManager mDisplayManager;
@@ -62,11 +71,18 @@ public class DolbyVisionService extends Service {
     private boolean mPlaying;
     private int mLastBrightness = -1;
     private boolean mBrightnessListenerRegistered;
+    private boolean mHdrSdrRatioListenerRegistered;
     private boolean mAdjustedBrightnessEnabled;
     private ContentObserver mBrightnessSettingObserver;
     private AdjustedBrightnessRamp mAdjustedBrightnessRamp;
     private float mAdjustedBrightnessTarget = Float.NaN;
     private int mLastAdjustedBrightness = -1;
+    private boolean mRampRatesLoaded;
+    private DisplayRampRates mRampRates;
+    private boolean mHdrBoostKnown;
+    private boolean mHdrBoost;
+    // Uptime of the last HDR boost change not yet applied to a target, -1 for none.
+    private long mHdrBoostChangeUptime = -1;
     private int mDisplayState = Display.STATE_UNKNOWN;
     private int mConnectAttempts;
 
@@ -101,6 +117,10 @@ public class DolbyVisionService extends Service {
             };
 
     private final Runnable mConnectRunnable = this::connect;
+
+    // Runs on mHandler's thread, see updateBrightnessListener().
+    private final Consumer<Display> mHdrSdrRatioListener =
+            display -> updateAdjustedBrightness(false);
 
     private final DisplayManager.DisplayListener mBrightnessListener =
             new DisplayManager.DisplayListener() {
@@ -345,6 +365,23 @@ public class DolbyVisionService extends Service {
             mDisplayManager.unregisterDisplayListener(mBrightnessListener);
             mBrightnessListenerRegistered = false;
         }
+        updateHdrSdrRatioListener();
+    }
+
+    // The HDR boost of the panel is only reported through the ratio listener.
+    private void updateHdrSdrRatioListener() {
+        final Display display = mDisplayManager.getDisplay(Display.DEFAULT_DISPLAY);
+        if (mAdjustedBrightnessEnabled && !mHdrSdrRatioListenerRegistered) {
+            if (display != null && display.isHdrSdrRatioAvailable()) {
+                display.registerHdrSdrRatioChangedListener(mHandler::post, mHdrSdrRatioListener);
+                mHdrSdrRatioListenerRegistered = true;
+            }
+        } else if (!mAdjustedBrightnessEnabled && mHdrSdrRatioListenerRegistered) {
+            if (display != null) {
+                display.unregisterHdrSdrRatioChangedListener(mHdrSdrRatioListener);
+            }
+            mHdrSdrRatioListenerRegistered = false;
+        }
     }
 
     private void resetAdjustedBrightness() {
@@ -354,6 +391,8 @@ public class DolbyVisionService extends Service {
         }
         mAdjustedBrightnessTarget = Float.NaN;
         mLastAdjustedBrightness = -1;
+        mHdrBoostKnown = false;
+        mHdrBoostChangeUptime = -1;
         mDisplayState = Display.STATE_UNKNOWN;
     }
 
@@ -385,14 +424,48 @@ public class DolbyVisionService extends Service {
             return;
         }
         final float target = info.adjustedBrightness;
-        if (immediate || target != mAdjustedBrightnessTarget) {
+
+        // The panel ramps an HDR boost change with the SDR brightness unchanged at the fast rate
+        // (DisplayPowerController, isHdrOnlyChange). The SDR brightness is not visible here, so a
+        // switch of the boost on or off, seen through the HDR/SDR ratio, stands for it.
+        final long now = SystemClock.uptimeMillis();
+        final boolean hdrBoost = display.getHdrSdrRatio() > HDR_BOOST_RATIO;
+        final boolean boostChanged = mHdrBoostKnown && hdrBoost != mHdrBoost;
+        mHdrBoost = hdrBoost;
+        mHdrBoostKnown = true;
+        if (boostChanged) {
+            mHdrBoostChangeUptime = now;
+        }
+        final boolean hdrOnly = mHdrBoostChangeUptime >= 0
+                && now - mHdrBoostChangeUptime <= HDR_BOOST_WINDOW_MS;
+
+        final boolean targetChanged = immediate || target != mAdjustedBrightnessTarget;
+        // A boost change reported after its brightness change only speeds up the running ramp.
+        final boolean rerate = !targetChanged && boostChanged && mAdjustedBrightnessRamp != null
+                && mAdjustedBrightnessRamp.isRunning();
+        if (targetChanged || rerate) {
             if (mAdjustedBrightnessRamp == null) {
-                mAdjustedBrightnessRamp = new AdjustedBrightnessRamp(this::pushAdjustedBrightness);
+                if (!mRampRatesLoaded) {
+                    mRampRatesLoaded = true;
+                    mRampRates = DisplayRampRates.load(this, display);
+                    Log.i(TAG, mRampRates != null
+                            ? "Adjusted brightness ramp follows the panel: " + mRampRates
+                            : "Adjusted brightness ramp rates unavailable, using the fixed ramp");
+                }
+                mAdjustedBrightnessRamp =
+                        new AdjustedBrightnessRamp(this::pushAdjustedBrightness, mRampRates);
             }
             final boolean snap = immediate || mDisplayState != state
                     || mLastAdjustedBrightness == (int) (255.0f * target);
-            mAdjustedBrightnessRamp.setTarget(target, snap);
+            // A change of the auto-brightness level is a slow change, anything else is fast.
+            final boolean autoBrightness = Settings.System.getIntForUser(getContentResolver(),
+                    Settings.System.SCREEN_BRIGHTNESS_MODE,
+                    Settings.System.SCREEN_BRIGHTNESS_MODE_MANUAL, UserHandle.USER_CURRENT)
+                    == Settings.System.SCREEN_BRIGHTNESS_MODE_AUTOMATIC;
+            mAdjustedBrightnessRamp.setTarget(target, snap, autoBrightness, hdrOnly);
             mAdjustedBrightnessTarget = target;
+            // The boost change has been applied.
+            mHdrBoostChangeUptime = -1;
         }
         mDisplayState = state;
     }
