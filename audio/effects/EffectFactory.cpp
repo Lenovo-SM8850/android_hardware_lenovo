@@ -48,12 +48,17 @@ Factory::~Factory() {
     if (auto count = mEffectMap.size()) {
         LOG(ERROR) << __func__ << " remaining " << count
                    << " effect instances not destroyed indicating resource leak!";
+        // destroyEffectImpl_l() erases the entry, so take the live handles before destroying.
+        std::vector<std::shared_ptr<IEffect>> remaining;
         for (const auto& it : mEffectMap) {
             if (auto spEffect = it.first.lock()) {
                 LOG(ERROR) << __func__ << " erase remaining instance UUID "
                            << it.second.first.toString();
-                destroyEffectImpl_l(spEffect);
+                remaining.push_back(std::move(spEffect));
             }
+        }
+        for (const auto& spEffect : remaining) {
+            destroyEffectImpl_l(spEffect);
         }
     }
 }
